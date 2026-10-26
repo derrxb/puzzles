@@ -22,10 +22,17 @@ var _seat_markers: Array[Node3D] = []
 var _occupied: Array[bool] = []
 
 
+func _is_seat_marker(node_name: String) -> bool:
+	return node_name.begins_with("Seat") and node_name.substr(4).is_valid_int()
+
+
 func _ready() -> void:
 	add_to_group("tables")
+	# Seats are the child markers named exactly "Seat0", "Seat1", ... We check
+	# for "Seat" + a number so a decorative mesh called "Seat" is NOT mistaken
+	# for a seat.
 	for child in get_children():
-		if child is Node3D and child.name.begins_with("Seat"):
+		if child is Node3D and _is_seat_marker(child.name):
 			_seat_markers.append(child)
 			_occupied.append(false)
 

@@ -1,229 +1,233 @@
 # customer.gd
 #
-# A Customer walks in the door, goes to an assigned seat, orders a random drink,
-# and waits -- but only so long. A patience bar above their head ticks down. If
-# you serve the right drink in time they pay and leave happy; the wrong drink
-# annoys them (and costs you reputation) but they keep waiting; if patience runs
-# out they storm off and reputation drops.
+# ONE person. Customers always belong to a Party (see party.gd) -- a single, a
+# duo, or a group -- but each person orders and is served individually.
 #
-# The customer reports what happens through two SIGNALS (`served` and
-# `left_angry`). It does NOT touch reputation or money itself -- the GameManager
-# listens to these signals and is the only thing that changes the score. This
-# keeps all game state in one place (important for future multiplayer).
+# Lifecycle (driven partly by the Party, partly by itself):
+#   WALKING  - walking from the door to their assigned seat
+#   ORDERING - sitting with an order bubble + draining patience bar
+#   DRINKING - just got their beer; happily drinking before ordering again
+#   IDLE     - gave up on an order (annoyed); no longer ordering this visit
+#   LEAVING  - walking back to the door to exit
 #
-# This is a plain Node3D (no physics). It reaches its target by moving in a
-# straight line each frame -- simple and perfect for placeholder art. Real
-# pathfinding around furniture is a good later upgrade (see the README).
+# The customer reports what happens via signals (`served`, `order_timed_out`);
+# the Party forwards those to the GameManager, which owns the score. The customer
+# never touches reputation/money itself.
 extends Node3D
 
-# The three things a customer can be doing.
-enum State { WALKING_TO_SEAT, WAITING, LEAVING }
+enum State { WALKING, ORDERING, DRINKING, IDLE, LEAVING }
 
-@export var move_speed: float = 2.5      # meters per second
-@export var patience_time: float = 20.0  # seconds before they give up
+@export var move_speed: float = 2.5
+@export var patience_time: float = 35.0           # seconds to fill one order
+@export var drink_time_min: float = 8.0           # happy drinking before reorder
+@export var drink_time_max: float = 16.0
 
-# Signals the GameManager connects to. `correct` is true if we got the right drink.
-signal served(correct: bool)
-signal left_angry()
+signal served(correct: bool, quality: float)
+signal order_timed_out()
 
-# --- State ---
-var _state: int = State.WALKING_TO_SEAT
-var _order: int = 0               # which drink (Globals.Drink enum value)
+# Starts IDLE: a freshly spawned member just stands at the door until its Party
+# either seats it (walk_to_seat) or sends it home (leave).
+var _state: int = State.IDLE
+var _order: int = 0                 # which beer they currently want
 var _patience_left: float = 0.0
-var _target: Vector3              # where we are currently walking toward
-var _served_happy: bool = false   # true once correctly served (suppresses anger)
+var _drink_left: float = 0.0
+var _target: Vector3
 
-# Seat bookkeeping so we can free the seat when we leave.
-var _table: Node = null
-var _seat_index: int = -1
-
-# Where to walk to when leaving (set by the GameManager -- usually the door).
-var exit_position: Vector3 = Vector3.ZERO
-
-# --- Visual pieces we build in code (see _build_visuals) ---
-var _body: MeshInstance3D          # the capsule body (lives in the scene)
+var _body: MeshInstance3D
 var _body_material: StandardMaterial3D
-var _bubble: MeshInstance3D        # floating sphere showing the ordered color
-var _patience_fill: MeshInstance3D # shrinking/colored bar showing patience
+var _bubble: Node3D                 # the floating beer-mug "I want this" icon
+var _mug_fill: MeshInstance3D       # colored part of the mug icon
+var _bar_holder: Node3D             # patience bar wrapper (shown while ordering)
+var _patience_fill: MeshInstance3D
 
 
 func _ready() -> void:
 	add_to_group("customers")
-
-	# Grab the body mesh defined in Customer.tscn and give it its own material
-	# instance so we can recolor THIS customer without affecting others.
 	_body = $Body
 	_body_material = StandardMaterial3D.new()
 	_body_material.albedo_color = Color(0.85, 0.75, 0.55)  # neutral "person" tan
 	_body.material_override = _body_material
-
-	# Pick a random order (0, 1, or 2) and build the floating UI above the head.
-	_order = randi() % Globals.DRINK_COUNT
-	_patience_left = patience_time
 	_build_visuals()
 
 
 func _process(delta: float) -> void:
 	match _state:
-		State.WALKING_TO_SEAT:
-			_move_toward_target(delta)
-			if _reached_target():
-				_begin_waiting()
-
-		State.WAITING:
+		State.WALKING:
+			_move_toward(_target, delta)
+			if _reached(_target):
+				_begin_order()
+		State.ORDERING:
 			_patience_left -= delta
 			_update_patience_bar()
 			if _patience_left <= 0.0:
 				_give_up()
-
+		State.DRINKING:
+			_drink_left -= delta
+			if _drink_left <= 0.0:
+				_begin_order()  # order another round
 		State.LEAVING:
-			_move_toward_target(delta)
-			if _reached_target():
-				# We've reached the door -- remove ourselves from the game.
+			_move_toward(_target, delta)
+			if _reached(_target):
 				queue_free()
+		State.IDLE:
+			pass
 
 
 # ------------------------------------------------------------------------------
-# Called by the GameManager right after spawning us.
+# Called by the Party
 # ------------------------------------------------------------------------------
-func assign_seat(table: Node, seat_index: int, seat_position: Vector3) -> void:
-	_table = table
-	_seat_index = seat_index
+func walk_to_seat(seat_position: Vector3) -> void:
 	_target = seat_position
-	_state = State.WALKING_TO_SEAT
+	_state = State.WALKING
 
 
-# What drink did this customer order? Used by the player when delivering.
+func leave(exit_position: Vector3, angry: bool = false) -> void:
+	_target = exit_position
+	_state = State.LEAVING
+	_hide_order_ui()
+	if angry:
+		_flash(Color(0.85, 0.2, 0.2))
+
+
+# ------------------------------------------------------------------------------
+# Serving (called by the player)
+# ------------------------------------------------------------------------------
+func is_waiting() -> bool:
+	return _state == State.ORDERING
+
+
 func get_order() -> int:
 	return _order
 
 
-# Can the player currently hand this customer a drink? (Only while seated/waiting.)
-func is_waiting() -> bool:
-	return _state == State.WAITING
-
-
-# The player calls this to deliver a drink of `drink_color`.
-# Returns true if it was the correct drink. Either way we report via `served`.
-func serve(drink_color: int) -> bool:
-	if _state != State.WAITING:
+# Deliver a beer. Returns true if it was the right one. Reports via `served`.
+func serve(beer_type: int, quality: float) -> bool:
+	if _state != State.ORDERING:
 		return false
-
-	var correct := (drink_color == _order)
-	served.emit(correct)
-
+	var correct := (beer_type == _order)
+	served.emit(correct, quality)
 	if correct:
-		_served_happy = true
-		_leave(Color(0.25, 0.85, 0.35))  # turn green and head for the door
-	# A wrong drink: we already emitted served(false) so the GameManager docks
-	# reputation. The customer stays and keeps waiting for the right one.
+		_hide_order_ui()
+		_flash(Color(0.3, 0.85, 0.4))          # happy green
+		_state = State.DRINKING
+		_drink_left = randf_range(drink_time_min, drink_time_max)
+	# A wrong beer: they stay put and keep waiting for the right one.
 	return correct
 
 
 # ------------------------------------------------------------------------------
-# Internal behavior
+# Internal
 # ------------------------------------------------------------------------------
-func _begin_waiting() -> void:
-	_state = State.WAITING
+func _begin_order() -> void:
+	_order = randi() % Globals.DRINK_COUNT
+	_patience_left = patience_time
+	_state = State.ORDERING
+	_flash(Color(0.85, 0.75, 0.55))            # back to neutral
+	var mug_mat := _mug_fill.material_override as StandardMaterial3D
+	mug_mat.albedo_color = Globals.color_for(_order)
 	_bubble.visible = true
-	_patience_fill.get_parent().visible = true
+	_bar_holder.visible = true
+	_update_patience_bar()
 
 
 func _give_up() -> void:
-	if _served_happy:
-		return
-	left_angry.emit()
-	_leave(Color(0.85, 0.2, 0.2))  # turn red and storm out
+	# Set our state BEFORE emitting: the Party reacts to this signal synchronously
+	# (it makes the whole party leave), and we must not overwrite its state change.
+	_flash(Color(0.85, 0.2, 0.2))              # annoyed red
+	_hide_order_ui()
+	_state = State.IDLE
+	order_timed_out.emit()
 
 
-# Shared "head for the exit and disappear" logic for both happy and angry exits.
-func _leave(flash_color: Color) -> void:
-	_body_material.albedo_color = flash_color
+func _hide_order_ui() -> void:
 	_bubble.visible = false
-	_patience_fill.get_parent().visible = false
-	_free_our_seat()
-	_target = exit_position
-	_state = State.LEAVING
+	_bar_holder.visible = false
 
 
-func _free_our_seat() -> void:
-	if _table != null and _seat_index != -1:
-		_table.free_seat(_seat_index)
-		_table = null
-		_seat_index = -1
+func _flash(color: Color) -> void:
+	_body_material.albedo_color = color
 
 
-func _move_toward_target(delta: float) -> void:
-	# Move in a straight line toward the target, but keep our Y (height) fixed so
-	# we glide along the floor rather than diving toward the target's height.
-	var flat_target := Vector3(_target.x, global_position.y, _target.z)
-	global_position = global_position.move_toward(flat_target, move_speed * delta)
+func _move_toward(target: Vector3, delta: float) -> void:
+	var flat := Vector3(target.x, global_position.y, target.z)
+	global_position = global_position.move_toward(flat, move_speed * delta)
 
 
-func _reached_target() -> bool:
+func _reached(target: Vector3) -> bool:
 	var here := Vector2(global_position.x, global_position.z)
-	var there := Vector2(_target.x, _target.z)
-	return here.distance_to(there) < 0.15
+	return here.distance_to(Vector2(target.x, target.z)) < 0.15
 
 
 # ------------------------------------------------------------------------------
-# Build the floating order bubble + patience bar in code.
+# Floating order bubble (a little beer mug) + patience bar, built in code.
 # ------------------------------------------------------------------------------
 func _build_visuals() -> void:
-	# --- Order bubble: a small sphere colored like the drink they want. ---
-	_bubble = MeshInstance3D.new()
-	var sphere := SphereMesh.new()
-	sphere.radius = 0.22
-	sphere.height = 0.44
-	_bubble.mesh = sphere
-	_bubble.position = Vector3(0, 2.3, 0)  # float above the head
-	var bubble_mat := StandardMaterial3D.new()
-	bubble_mat.albedo_color = Globals.color_for(_order)
-	# Unshaded = ignore lighting, so the color reads clearly as an "icon".
-	bubble_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	_bubble.material_override = bubble_mat
-	_bubble.visible = false  # hidden until they sit down
+	# A mug: a colored cylinder (the beer) with a white cap (the foam) on top.
+	_bubble = Node3D.new()
+	_bubble.position = Vector3(0, 2.45, 0)
+	_bubble.visible = false
 	add_child(_bubble)
 
-	# --- Patience bar: a dark background quad with a colored fill quad on top. ---
-	# We wrap them in a holder so we can show/hide and billboard them together.
-	var bar_holder := Node3D.new()
-	bar_holder.position = Vector3(0, 2.0, 0)
-	bar_holder.visible = false
-	add_child(bar_holder)
+	_mug_fill = MeshInstance3D.new()
+	var mug_mesh := CylinderMesh.new()
+	mug_mesh.top_radius = 0.2
+	mug_mesh.bottom_radius = 0.2
+	mug_mesh.height = 0.32
+	_mug_fill.mesh = mug_mesh
+	_mug_fill.material_override = _unshaded(Color.WHITE)
+	_bubble.add_child(_mug_fill)
+
+	var mug_foam := MeshInstance3D.new()
+	var foam_mesh := CylinderMesh.new()
+	foam_mesh.top_radius = 0.21
+	foam_mesh.bottom_radius = 0.21
+	foam_mesh.height = 0.1
+	mug_foam.mesh = foam_mesh
+	mug_foam.position = Vector3(0, 0.2, 0)
+	mug_foam.material_override = _unshaded(Globals.FOAM_COLOR)
+	_bubble.add_child(mug_foam)
+
+	# Patience bar: dark background + colored fill that SHRINKS as time runs out.
+	_bar_holder = Node3D.new()
+	_bar_holder.position = Vector3(0, 2.05, 0)
+	_bar_holder.visible = false
+	add_child(_bar_holder)
 
 	var bg := MeshInstance3D.new()
 	var bg_quad := QuadMesh.new()
 	bg_quad.size = Vector2(1.1, 0.18)
 	bg.mesh = bg_quad
-	bg.material_override = _make_bar_material(Color(0.1, 0.1, 0.1))
-	bar_holder.add_child(bg)
+	bg.material_override = _bar_material(Color(0.1, 0.1, 0.1))
+	_bar_holder.add_child(bg)
 
 	_patience_fill = MeshInstance3D.new()
 	var fill_quad := QuadMesh.new()
 	fill_quad.size = Vector2(1.0, 0.12)
 	_patience_fill.mesh = fill_quad
-	# Nudge the fill slightly toward the camera so it draws on top of the bg.
 	_patience_fill.position = Vector3(0, 0, 0.01)
-	_patience_fill.material_override = _make_bar_material(Color(0.25, 0.85, 0.35))
-	bar_holder.add_child(_patience_fill)
+	_patience_fill.material_override = _bar_material(Color(0.25, 0.85, 0.35))
+	_bar_holder.add_child(_patience_fill)
 
 
-# A flat, always-faces-camera material for the bar pieces.
-func _make_bar_material(color: Color) -> StandardMaterial3D:
+func _unshaded(color: Color) -> StandardMaterial3D:
 	var mat := StandardMaterial3D.new()
 	mat.albedo_color = color
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	# Billboard mode rotates the quad to always face the camera -- so the bar is
-	# readable from our fixed overhead angle.
+	return mat
+
+
+func _bar_material(color: Color) -> StandardMaterial3D:
+	var mat := _unshaded(color)
 	mat.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
+	# THE FIX: without this, billboard mode resets the node's scale every frame,
+	# so scaling the fill bar (below) would do nothing. keep_scale lets our
+	# scale.x survive, so the bar actually shrinks.
+	mat.billboard_keep_scale = true
 	return mat
 
 
 func _update_patience_bar() -> void:
 	var fraction := clampf(_patience_left / patience_time, 0.0, 1.0)
-	# Shrink the fill bar horizontally as patience drains (scales from the center).
 	_patience_fill.scale.x = fraction
-	# Color goes green (lots of time) -> red (almost out).
 	var mat := _patience_fill.material_override as StandardMaterial3D
 	mat.albedo_color = Color(0.25, 0.85, 0.35).lerp(Color(0.9, 0.2, 0.2), 1.0 - fraction)

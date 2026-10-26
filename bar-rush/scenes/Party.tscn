@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://b0barparty01"]
+
+[ext_resource type="Script" path="res://scripts/party.gd" id="1_party"]
+
+[node name="Party" type="Node3D"]
+script = ExtResource("1_party")

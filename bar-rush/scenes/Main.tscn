@@ -2,9 +2,7 @@
 
 [ext_resource type="Script" uid="uid://w6vvlifulfs6" path="res://scripts/main.gd" id="1_main"]
 [ext_resource type="PackedScene" uid="uid://bb5pht2vddnnk" path="res://scenes/Counter.tscn" id="2_counter"]
-[ext_resource type="PackedScene" uid="uid://b0bartable01" path="res://scenes/Table.tscn" id="3_table"]
 [ext_resource type="PackedScene" uid="uid://b0barplayer01" path="res://scenes/Player.tscn" id="4_player"]
-[ext_resource type="PackedScene" uid="uid://bd1npirxigjp5" path="res://scenes/Customer.tscn" id="5_customer"]
 [ext_resource type="Script" uid="uid://douow8x3vtvrv" path="res://scripts/game_manager.gd" id="6_gm"]
 [ext_resource type="PackedScene" uid="uid://b0barui01" path="res://scenes/UI.tscn" id="7_ui"]
 
@@ -31,21 +29,6 @@ environment = SubResource("env")
 [node name="Counter" parent="." unique_id=1447287256 instance=ExtResource("2_counter")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 5)
 
-[node name="Table0" parent="." unique_id=574567856 instance=ExtResource("3_table")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -5, 0, -2)
-
-[node name="Table1" parent="." unique_id=1799984326 instance=ExtResource("3_table")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -2)
-
-[node name="Table2" parent="." unique_id=466103149 instance=ExtResource("3_table")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5, 0, -2)
-
-[node name="Table3" parent="." unique_id=2009055652 instance=ExtResource("3_table")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -4.0849533, -0.06608105, 1.8803043)
-
-[node name="Table4" parent="." unique_id=1507572603 instance=ExtResource("3_table")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3.5, 0, 2)
-
 [node name="Player" parent="." unique_id=1362714980 instance=ExtResource("4_player")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 2)
 
@@ -56,7 +39,6 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -5.4)
 
 [node name="GameManager" type="Node" parent="." unique_id=1581040991]
 script = ExtResource("6_gm")
-customer_scene = ExtResource("5_customer")
 spawn_point = NodePath("../Door")
 customer_container = NodePath("../CustomerContainer")
 

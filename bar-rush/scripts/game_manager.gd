@@ -1,151 +1,181 @@
 # game_manager.gd
 #
-# The GameManager is the "brain" of the game. It owns ALL the live game state:
+# The "brain" and single source of truth. It owns ALL live game state:
 #   - reputation and money
-#   - which seats are free
-#   - spawning customers over time
-#   - reacting when a customer is served or storms off
+#   - the queue of parties waiting at the door
+#   - spawning parties over time
+#   - the seating API the UI calls when the player clicks a table
+#   - every change to the score
 #
-# Everything that changes the score flows through here. That is deliberate:
-# when we add networked multiplayer later, THE SERVER will run this one node and
-# be the single source of truth, while clients just display what it reports.
-# Because no other script mutates reputation/money directly, that change will be
-# localized here instead of scattered across the codebase.
-#
-# This node lives inside Main.tscn (it is NOT an autoload). Other scripts find it
-# with `get_tree().get_first_node_in_group("game_manager")` -- see player.gd.
+# Nothing else mutates reputation/money -- parties just relay signals to here.
+# That's what will let a server own this one node for multiplayer later.
 extends Node
 
-# --- Tunable settings (editable in the Inspector because of @export) ----------
-# @export makes a variable show up in the Godot editor's Inspector panel, so you
-# can tweak balance without touching code.
-@export var starting_reputation: int = 100
+# --- Tunables (editable in the Inspector) -------------------------------------
+@export var starting_reputation: int = 50     # starts mid so it can climb slowly
 @export var starting_money: int = 0
-@export var reward_money: int = 10        # money gained for a correct drink
-@export var reward_reputation: int = 5    # reputation gained for a correct drink
-@export var penalty_wrong: int = 8        # reputation lost for a wrong drink
-@export var penalty_angry: int = 15       # reputation lost when a customer gives up
-@export var spawn_interval: float = 4.0   # seconds between spawn attempts
 
-# The Customer scene we instance (create copies of) each time someone arrives.
-@export var customer_scene: PackedScene
+@export var base_money: int = 8               # money for a perfect beer (scaled by quality)
+@export var penalty_wrong: int = 4            # rep lost for the wrong beer
+@export var penalty_order_expired: int = 6    # rep lost when a seated order times out
+@export var penalty_unseated: int = 8         # rep lost when a party leaves the door
 
-# Where customers appear (the door) and where we parent them in the tree.
-# These are wired up in the editor via the Inspector (set from Main.tscn).
-@export var spawn_point: Node3D
-@export var customer_container: Node3D
+@export var spawn_interval_min: float = 16.0
+@export var spawn_interval_max: float = 26.0
+# When this many parties are already waiting at the door, nobody new shows up --
+# so when you're backed up, arrivals slow down instead of piling on.
+@export var max_queue: int = 2
+@export var dump_cost: int = 4                # money lost when you throw a beer away
+
+@export var party_scene: PackedScene
+
+# Wired in the Inspector, with a code fallback (see _ready).
+@export var spawn_point: Node3D               # the door (arrival + exit)
+@export var customer_container: Node3D        # where party nodes are parented
 
 # --- Live state ---------------------------------------------------------------
 var reputation: int
 var money: int
+var _queue: Array = []                         # parties QUEUING at the door (FIFO)
 
-# Signals let other nodes react WITHOUT the GameManager needing to know about them.
-# The UI connects to this signal and refreshes its labels whenever we emit it.
 signal stats_changed(reputation: int, money: int)
+signal queue_changed()                         # UI refreshes the seating panel
 
-# Internal timer used to pace customer spawns.
 var _spawn_timer: Timer
 
 
 func _ready() -> void:
-	# Put ourselves in a group so any script can find us by name.
 	add_to_group("game_manager")
 
-	# Resolve our collaborators. They can be wired in the Inspector (the @export
-	# fields), but we also fall back to finding the sibling nodes by name so the
-	# game works no matter how the scene was saved. GameManager, Door and
-	# CustomerContainer all live side by side under Main.
+	# Resolve collaborators (Inspector first, then sibling nodes, then by path).
 	if spawn_point == null:
 		spawn_point = get_node_or_null("../Door")
 	if customer_container == null:
 		customer_container = get_node_or_null("../CustomerContainer")
+	if party_scene == null:
+		party_scene = load("res://scenes/Party.tscn")
 
-	if spawn_point == null or customer_container == null:
-		push_error("GameManager needs a 'Door' and 'CustomerContainer' node beside it.")
+	if spawn_point == null or customer_container == null or party_scene == null:
+		push_error("GameManager is missing Door, CustomerContainer, or Party scene.")
 		return
 
 	reputation = starting_reputation
 	money = starting_money
 
-	# Create a Timer in code and start it. Every time it "times out" we try to
-	# spawn a customer. (We could also have added a Timer node in the scene; doing
-	# it in code keeps the GameManager self-contained and easy to follow.)
 	_spawn_timer = Timer.new()
-	_spawn_timer.wait_time = spawn_interval
-	_spawn_timer.autostart = true
+	_spawn_timer.one_shot = true
 	_spawn_timer.timeout.connect(_on_spawn_timer_timeout)
 	add_child(_spawn_timer)
+	_restart_spawn_timer()
 
-	# Tell the UI the starting numbers (emit once so labels aren't blank).
-	# call_deferred waits one frame so the UI has finished connecting first.
 	stats_changed.emit.call_deferred(reputation, money)
 
 
 # ------------------------------------------------------------------------------
-# SPAWNING
+# Spawning parties
 # ------------------------------------------------------------------------------
+func _restart_spawn_timer() -> void:
+	_spawn_timer.start(randf_range(spawn_interval_min, spawn_interval_max))
+
+
 func _on_spawn_timer_timeout() -> void:
-	_try_spawn_customer()
+	# Don't let a crowd pile up at the door: if we're already backed up, this
+	# slot is skipped (the next party simply arrives later).
+	if _queue.size() < max_queue:
+		_spawn_party()
+	_restart_spawn_timer()
 
 
-func _try_spawn_customer() -> void:
-	# Only spawn if we actually have a free seat AND a customer scene assigned.
-	if customer_scene == null:
-		push_warning("GameManager has no customer_scene assigned.")
-		return
+func _spawn_party() -> void:
+	var party := party_scene.instantiate()
+	customer_container.add_child(party)
+	party.setup(_random_party_kind(), spawn_point.global_position, spawn_point.global_position)
 
-	var seat := _find_free_seat()
-	if seat.is_empty():
-		return  # Bar is full -- try again on the next timer tick.
+	# Relay the party's events to our score handlers. We bind the party itself to
+	# the "left" handler so we know which one to drop from the queue.
+	party.order_served.connect(_on_order_served)
+	party.order_expired.connect(_on_order_expired)
+	party.left_unseated.connect(_on_left_unseated.bind(party))
 
-	# Instantiate() makes a fresh copy of the Customer scene.
-	var customer := customer_scene.instantiate()
-	customer_container.add_child(customer)
-
-	# Start the customer at the door, then tell it where to sit. The door also
-	# doubles as the exit they walk back to when they leave.
-	customer.global_position = spawn_point.global_position
-	customer.exit_position = spawn_point.global_position
-
-	# React to what the customer does. We connect to its signals here so that ALL
-	# score changes happen inside the GameManager.
-	customer.served.connect(_on_customer_served)
-	customer.left_angry.connect(_on_customer_left_angry)
-
-	# Hand the customer its assigned seat (table node + seat index).
-	var table: Node = seat["table"]
-	var seat_index: int = seat["index"]
-	table.occupy_seat(seat_index)
-	customer.assign_seat(table, seat_index, table.get_seat_global_position(seat_index))
+	_queue.append(party)
+	queue_changed.emit()
 
 
-# Look through every table (they are all in the "tables" group) and return the
-# first free seat as a small dictionary, or an empty dictionary if none are free.
-func _find_free_seat() -> Dictionary:
+# Weighted pick: mostly singles and duos, groups are rarer (they're a handful).
+func _random_party_kind() -> int:
+	var r := randf()
+	if r < 0.45:
+		return Globals.PartyKind.SINGLE
+	elif r < 0.85:
+		return Globals.PartyKind.DUO
+	return Globals.PartyKind.GROUP
+
+
+# ------------------------------------------------------------------------------
+# Seating API (called by the UI's seating panel)
+# ------------------------------------------------------------------------------
+func get_queue() -> Array:
+	return _queue
+
+
+func get_front_party():
+	if _queue.is_empty():
+		return null
+	return _queue[0]
+
+
+# All tables that could seat the given party right now.
+func eligible_tables(party) -> Array:
+	var result := []
 	for table in get_tree().get_nodes_in_group("tables"):
-		var index: int = table.get_free_seat_index()
-		if index != -1:
-			return {"table": table, "index": index}
-	return {}
+		if table.can_seat(party.kind, party.size):
+			result.append(table)
+	return result
+
+
+# Seat the front party at `table`. Returns false if it can't be seated there.
+func seat_front_party(table) -> bool:
+	var party = get_front_party()
+	if party == null or not table.can_seat(party.kind, party.size):
+		return false
+	party.seat_at(table)
+	_queue.pop_front()
+	queue_changed.emit()
+	return true
 
 
 # ------------------------------------------------------------------------------
-# SCORE EVENTS (the only place reputation/money change)
+# Score events (the ONLY place reputation/money change)
 # ------------------------------------------------------------------------------
-func _on_customer_served(correct: bool) -> void:
+func _on_order_served(correct: bool, quality: float) -> void:
 	if correct:
-		_add_reputation(reward_reputation)
-		_add_money(reward_money)
+		_add_money(maxi(1, roundi(base_money * quality)))
+		if quality >= 0.9:
+			_add_reputation(2)
+		elif quality >= 0.75:
+			_add_reputation(1)
+		# a weak-but-correct pour: money only, no reputation
 	else:
 		_add_reputation(-penalty_wrong)
 
 
-func _on_customer_left_angry() -> void:
-	_add_reputation(-penalty_angry)
+func _on_order_expired() -> void:
+	_add_reputation(-penalty_order_expired)
+
+
+# Called by the player when they throw a beer away: the drink is wasted, so it
+# costs money (but no reputation -- better than serving the wrong beer).
+func waste_drink() -> void:
+	_add_money(-dump_cost)
+
+
+func _on_left_unseated(party) -> void:
+	_queue.erase(party)
+	_add_reputation(-penalty_unseated)
+	queue_changed.emit()
 
 
 func _add_reputation(amount: int) -> void:
-	# clamp() keeps reputation inside 0..100 so the bar never overflows.
 	reputation = clampi(reputation + amount, 0, 100)
 	stats_changed.emit(reputation, money)
 
