@@ -1,0 +1,75 @@
+[gd_scene format=3 uid="uid://bqojjwjoj5xf5"]
+
+[ext_resource type="Script" path="res://scripts/table.gd" id="1_tbl"]
+
+[sub_resource type="CylinderShape3D" id="shape_top"]
+height = 0.9
+radius = 0.9
+
+[sub_resource type="CylinderMesh" id="mesh_top"]
+top_radius = 0.9
+bottom_radius = 0.9
+height = 0.9
+
+[sub_resource type="StandardMaterial3D" id="mat_top"]
+albedo_color = Color(0.45, 0.3, 0.2, 1)
+
+[sub_resource type="CylinderMesh" id="mesh_stool"]
+top_radius = 0.28
+bottom_radius = 0.28
+height = 0.5
+
+[sub_resource type="StandardMaterial3D" id="mat_stool"]
+albedo_color = Color(0.3, 0.22, 0.16, 1)
+
+[node name="LargeTable" type="StaticBody3D"]
+script = ExtResource("1_tbl")
+
+[node name="Collision" type="CollisionShape3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.45, 0)
+shape = SubResource("shape_top")
+
+[node name="Top" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.45, 0)
+mesh = SubResource("mesh_top")
+material_override = SubResource("mat_top")
+
+[node name="Seat0" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1.5, 0, 0)
+
+[node name="Seat1" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.4635, 0, 1.4266)
+
+[node name="Seat2" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -1.2135, 0, 0.8817)
+
+[node name="Seat3" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -1.2135, 0, -0.8817)
+
+[node name="Seat4" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.4635, 0, -1.4266)
+
+[node name="Stool0" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1.5, 0.25, 0)
+mesh = SubResource("mesh_stool")
+material_override = SubResource("mat_stool")
+
+[node name="Stool1" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.4635, 0.25, 1.4266)
+mesh = SubResource("mesh_stool")
+material_override = SubResource("mat_stool")
+
+[node name="Stool2" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -1.2135, 0.25, 0.8817)
+mesh = SubResource("mesh_stool")
+material_override = SubResource("mat_stool")
+
+[node name="Stool3" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -1.2135, 0.25, -0.8817)
+mesh = SubResource("mesh_stool")
+material_override = SubResource("mat_stool")
+
+[node name="Stool4" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.4635, 0.25, -1.4266)
+mesh = SubResource("mesh_stool")
+material_override = SubResource("mat_stool")

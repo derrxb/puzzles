@@ -1,0 +1,29 @@
+[gd_scene format=3 uid="uid://b0barstool01"]
+
+[ext_resource type="Script" path="res://scripts/table.gd" id="1_tbl"]
+
+[sub_resource type="CylinderShape3D" id="shape_seat"]
+height = 0.55
+radius = 0.3
+
+[sub_resource type="CylinderMesh" id="mesh_seat"]
+top_radius = 0.3
+bottom_radius = 0.25
+height = 0.55
+
+[sub_resource type="StandardMaterial3D" id="mat_seat"]
+albedo_color = Color(0.3, 0.22, 0.16, 1)
+
+[node name="Stool" type="StaticBody3D"]
+script = ExtResource("1_tbl")
+
+[node name="Collision" type="CollisionShape3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.275, 0)
+shape = SubResource("shape_seat")
+
+[node name="Seat" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.275, 0)
+mesh = SubResource("mesh_seat")
+material_override = SubResource("mat_seat")
+
+[node name="Seat0" type="Node3D" parent="."]

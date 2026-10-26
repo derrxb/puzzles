@@ -1,0 +1,8 @@
+<svg width="128" height="128" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">
+  <rect width="128" height="128" rx="16" fill="#1f2430"/>
+  <!-- A little cocktail glass -->
+  <path d="M34 36 H94 L68 72 V96 H60 V72 Z" fill="none" stroke="#f2d16b" stroke-width="5" stroke-linejoin="round"/>
+  <path d="M42 44 H86 L68 68 Z" fill="#e8484b"/>
+  <line x1="48" y1="100" x2="80" y2="100" stroke="#f2d16b" stroke-width="5" stroke-linecap="round"/>
+  <circle cx="78" cy="40" r="5" fill="#4ad06a"/>
+</svg>

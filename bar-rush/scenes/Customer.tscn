@@ -1,0 +1,14 @@
+[gd_scene load_steps=3 format=3 uid="uid://b0barcustomer01"]
+
+[ext_resource type="Script" path="res://scripts/customer.gd" id="1_customer"]
+
+[sub_resource type="CapsuleMesh" id="mesh_body"]
+radius = 0.4
+height = 1.8
+
+[node name="Customer" type="Node3D"]
+script = ExtResource("1_customer")
+
+[node name="Body" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.9, 0)
+mesh = SubResource("mesh_body")

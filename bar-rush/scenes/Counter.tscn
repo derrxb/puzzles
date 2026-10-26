@@ -1,0 +1,51 @@
+[gd_scene load_steps=9 format=3 uid="uid://b0barcounter01"]
+
+[ext_resource type="Script" path="res://scripts/counter.gd" id="1_counter"]
+
+[sub_resource type="BoxShape3D" id="shape_bar"]
+size = Vector3(8, 1.1, 1)
+
+[sub_resource type="BoxMesh" id="mesh_bar"]
+size = Vector3(8, 1.1, 1)
+
+[sub_resource type="StandardMaterial3D" id="mat_bar"]
+albedo_color = Color(0.35, 0.24, 0.18, 1)
+
+[sub_resource type="BoxMesh" id="mesh_tap"]
+size = Vector3(0.3, 0.3, 0.3)
+
+[sub_resource type="StandardMaterial3D" id="mat_red"]
+albedo_color = Color(0.9, 0.2, 0.2, 1)
+
+[sub_resource type="StandardMaterial3D" id="mat_blue"]
+albedo_color = Color(0.2, 0.45, 0.95, 1)
+
+[sub_resource type="StandardMaterial3D" id="mat_green"]
+albedo_color = Color(0.25, 0.8, 0.35, 1)
+
+[node name="Counter" type="StaticBody3D"]
+script = ExtResource("1_counter")
+
+[node name="Collision" type="CollisionShape3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.55, 0)
+shape = SubResource("shape_bar")
+
+[node name="Bar" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.55, 0)
+mesh = SubResource("mesh_bar")
+material_override = SubResource("mat_bar")
+
+[node name="TapRed" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -1.5, 1.25, 0)
+mesh = SubResource("mesh_tap")
+material_override = SubResource("mat_red")
+
+[node name="TapBlue" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.25, 0)
+mesh = SubResource("mesh_tap")
+material_override = SubResource("mat_blue")
+
+[node name="TapGreen" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1.5, 1.25, 0)
+mesh = SubResource("mesh_tap")
+material_override = SubResource("mat_green")

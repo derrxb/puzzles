@@ -1,0 +1,35 @@
+[gd_scene load_steps=6 format=3 uid="uid://b0barplayer01"]
+
+[ext_resource type="Script" path="res://scripts/player.gd" id="1_player"]
+
+[sub_resource type="CapsuleShape3D" id="shape_body"]
+radius = 0.4
+height = 1.8
+
+[sub_resource type="CapsuleMesh" id="mesh_body"]
+radius = 0.4
+height = 1.8
+
+[sub_resource type="StandardMaterial3D" id="mat_body"]
+albedo_color = Color(0.2, 0.55, 0.95, 1)
+
+[sub_resource type="BoxMesh" id="mesh_held"]
+size = Vector3(0.25, 0.25, 0.25)
+
+[node name="Player" type="CharacterBody3D"]
+script = ExtResource("1_player")
+
+[node name="Collision" type="CollisionShape3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.9, 0)
+shape = SubResource("shape_body")
+
+[node name="Body" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.9, 0)
+mesh = SubResource("mesh_body")
+material_override = SubResource("mat_body")
+
+[node name="Hold" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.2, 0.7)
+
+[node name="HeldDrink" type="MeshInstance3D" parent="Hold"]
+mesh = SubResource("mesh_held")
