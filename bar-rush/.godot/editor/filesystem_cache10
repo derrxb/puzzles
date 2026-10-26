@@ -1,5 +1,5 @@
 78098b89c88a74ebe8c20117b8754620
-::res://::1793018151
+::res://::1793018443
 export_presets.cfg::TextFile::-1::1792933168::0::1::::<><><>0<>0<><>::
 icon.svg::CompressedTexture2D::497272437373629089::1792932697::1792932702::1::::<><><>0<>0<>018bbb850c7cbbcf0fec4e3ec0d18e17<>res://.godot/imported/icon.svg-218a8f2b3041327d8a5756f3a245f83b.ctex::
 README.md::TextFile::-1::1793017924::0::1::::<><><>0<>0<><>::
@@ -13,13 +13,13 @@ Player.tscn::PackedScene::4143237315769704208::1792932569::0::1::::<><><>0<>0<><
 Stool.tscn::PackedScene::121859926068270792::1793015906::0::1::::<><><>0<>0<><>::res://scripts/table.gd
 Table.tscn::PackedScene::121859926732303780::1792932582::0::1::::<><><>0<>0<><>::res://scripts/table.gd
 UI.tscn::PackedScene::3100445976828::1792932608::0::1::::<><><>0<>0<><>::res://scripts/ui.gd
-::res://scripts/::1793017830
+::res://scripts/::1793018403
 counter.gd::GDScript::8524435661146325129::1793015908::0::1::::<>StaticBody3D<><>0<>0<><>::
 customer.gd::GDScript::6684091534881319720::1793016867::0::1::::<>Node3D<><>0<>0<><>::
 game_manager.gd::GDScript::8184084512559673171::1793017634::0::1::::<>Node<><>0<>0<><>::
 globals.gd::GDScript::3637412057812045563::1793015820::0::1::::<>Node<><>0<>0<><>::
 main.gd::GDScript::1609463419302293583::1793016407::0::1::::<>Node3D<><>0<>0<><>::
 party.gd::GDScript::6809157557667297619::1793016882::0::1::::<>Node3D<><>0<>0<><>::
-player.gd::GDScript::7739324268095671458::1793017830::0::1::::<>CharacterBody3D<><>0<>0<><>::
+player.gd::GDScript::7739324268095671458::1793018403::0::1::::<>CharacterBody3D<><>0<>0<><>::
 table.gd::GDScript::1636954970389682630::1793016700::0::1::::<>StaticBody3D<><>0<>0<><>::
 ui.gd::GDScript::3272470007086108541::1793017682::0::1::::<>CanvasLayer<><>0<>0<><>::

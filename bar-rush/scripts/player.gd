@@ -47,6 +47,9 @@ var _beer_type: int = -1
 var _liquid: float = 0.0
 var _foam: float = 0.0
 var _ruined: bool = false
+# After a glass finishes (auto-added to the tray, or spilled) we lock pouring
+# until Space is released, so holding it down doesn't instantly pour the next.
+var _pour_locked: bool = false
 
 # Visuals (built in code at the Hold point).
 var _tray_glasses: Array[MeshInstance3D] = []
@@ -75,6 +78,10 @@ func _process(delta: float) -> void:
 	if counter != null:
 		tap = counter.nearest_tap(global_position)
 	var near_tap := not tap.is_empty()
+
+	# Releasing Space clears the pour lock, so the next pour needs a fresh press.
+	if not Input.is_action_pressed("pour"):
+		_pour_locked = false
 
 	# Space is the single action key. If a customer we can serve is right next to
 	# us, pressing Space serves them; otherwise holding Space pours at a tap.
@@ -133,7 +140,7 @@ func _handle_movement(delta: float) -> void:
 # POURING / STOCKING THE TRAY
 # ------------------------------------------------------------------------------
 func _handle_pour(tap: Dictionary, delta: float) -> bool:
-	if tap.is_empty() or not Input.is_action_pressed("pour"):
+	if tap.is_empty() or not Input.is_action_pressed("pour") or _pour_locked:
 		return false
 
 	var tap_type: int = tap["type"]
@@ -152,9 +159,11 @@ func _handle_pour(tap: Dictionary, delta: float) -> bool:
 	if _liquid + _foam >= CAPACITY:
 		_ruined = true
 		_foam = CAPACITY - _liquid
+		_pour_locked = true                         # re-press to pour a fresh one
 	elif _liquid >= AUTO_COMMIT and _tray.size() < TRAY_CAP:
 		# Reached the green: auto-add to the tray, no need to step back.
 		_stock_active()
+		_pour_locked = true                         # re-press to pour the next
 	return true
 
 
