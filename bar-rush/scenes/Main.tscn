@@ -5,26 +5,38 @@
 [ext_resource type="PackedScene" uid="uid://b0barplayer01" path="res://scenes/Player.tscn" id="4_player"]
 [ext_resource type="Script" uid="uid://douow8x3vtvrv" path="res://scripts/game_manager.gd" id="6_gm"]
 [ext_resource type="PackedScene" uid="uid://b0barui01" path="res://scenes/UI.tscn" id="7_ui"]
+[ext_resource type="PackedScene" uid="uid://mqiyxiictvx1" path="res://assets/old_bar/scene.gltf" id="8_barenv"]
+[ext_resource type="Script" path="res://scripts/bar_environment.gd" id="9_barenvscript"]
 
 [sub_resource type="Environment" id="env"]
 background_mode = 1
 background_color = Color(0.08, 0.09, 0.12, 1)
 ambient_light_source = 2
-ambient_light_color = Color(0.6, 0.6, 0.65, 1)
+ambient_light_color = Color(0.72, 0.72, 0.75, 1)
+ambient_light_energy = 1.4
 
 [node name="Main" type="Node3D" unique_id=1933861196]
 script = ExtResource("1_main")
 
 [node name="Camera3D" type="Camera3D" parent="." unique_id=1928750036]
-transform = Transform3D(1, 0, 0, 0, 0.642788, 0.766044, 0, -0.766044, 0.642788, 0, 16, 13.4)
-fov = 60.0
+transform = Transform3D(1, 0, 0, 0, 0.642788, 0.766044, 0, -0.766044, 0.642788, 0, 14, 11.6)
+fov = 55.0
 
 [node name="DirectionalLight3D" type="DirectionalLight3D" parent="." unique_id=1764235383]
 transform = Transform3D(1, 0, 0, 0, 0.573576, 0.819152, 0, -0.819152, 0.573576, 0, 10, 0)
+light_energy = 1.3
 shadow_enabled = true
 
 [node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=921350741]
 environment = SubResource("env")
+
+; BarEnvironment -- the imported Sketchfab "Old bar" model, used purely as the
+; visible room (no collisions; the invisible walls/floor from main.gd still do
+; the physics). The transform recenters the model on X, drops its floor to y=0,
+; and will be nudged in Z / rotated to line the model's bar up with the counter.
+[node name="BarEnvironment" parent="." instance=ExtResource("8_barenv")]
+transform = Transform3D(-1, 0, 0, 0, 1, 0, 0, 0, -1, 3.546, -4.337, 4)
+script = ExtResource("9_barenvscript")
 
 [node name="Counter" parent="." unique_id=1447287256 instance=ExtResource("2_counter")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 5)
@@ -33,7 +45,7 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 5)
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 2)
 
 [node name="Door" type="Node3D" parent="." unique_id=106886550]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -5.4)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3, 0, -1)
 
 [node name="CustomerContainer" type="Node3D" parent="." unique_id=1189870213]
 

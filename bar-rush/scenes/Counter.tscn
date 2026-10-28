@@ -30,8 +30,12 @@ script = ExtResource("1_counter")
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.55, 0)
 shape = SubResource("shape_bar")
 
+; The brown box bar is hidden -- the imported "Old bar" model provides the
+; visible counter now. The collision shape above stays active so pouring/serving
+; still work. Toggle this back on to see the old placeholder counter.
 [node name="Bar" type="MeshInstance3D" parent="."]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.55, 0)
+visible = false
 mesh = SubResource("mesh_bar")
 material_override = SubResource("mat_bar")
 

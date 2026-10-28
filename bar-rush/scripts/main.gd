@@ -24,6 +24,12 @@ const WALL_HEIGHT := 3.0
 const WALL_THICK := 0.3
 const DOOR_WIDTH := 3.0
 
+# When false, the floor and walls are still built as INVISIBLE colliders (so the
+# player and customers can't walk out of the room) but nothing is drawn -- the
+# imported "Old bar" model in Main.tscn provides the visible room instead. Flip
+# this on in the editor to see the old placeholder box room again.
+@export var show_placeholder_room := false
+
 
 func _ready() -> void:
 	_build_room()
@@ -34,27 +40,32 @@ func _ready() -> void:
 # Furniture
 # ------------------------------------------------------------------------------
 func _place_furniture() -> void:
-	# Bar stools for SINGLES: flanking the taps along the front of the counter
-	# (the counter is at z = 5; taps sit in the middle, so stools go to the sides).
+	# NOTE: furniture positions are fitted to the imported "Old bar" model's
+	# visible interior floor (the bar front + the green games room, which sits
+	# center-right). The model only covers roughly x:-6..8, z:-1.4..5, so seats
+	# are kept inside that or customers would sit outside the walls. See the
+	# BarEnvironment transform in Main.tscn.
+
+	# Bar stools for SINGLES: along the front of the counter (counter is at z=5).
 	var bar_x := [-3.5, -2.5, 2.5, 3.5]
 	for i in bar_x.size():
 		_place(STOOL, Vector3(bar_x[i], 0, 4.0), Globals.SeatKind.BAR, "Bar %d" % (i + 1))
 
-	# Small tables for DUOS.
-	var smalls := [Vector3(-5, 0, -0.5), Vector3(5, 0, -0.5), Vector3(0, 0, 1.0)]
+	# Small tables for DUOS: tucked around the open floor.
+	var smalls := [Vector3(-3.5, 0, 3.3), Vector3(4.5, 0, 3.0), Vector3(0.5, 0, 0.5)]
 	for i in smalls.size():
 		_place(SMALL_TABLE, smalls[i], Globals.SeatKind.SMALL, "Table %d" % (i + 1))
 
-	# Big tables for GROUPS, toward the back where there's room for 5 seats.
-	var larges := [Vector3(-4, 0, -3.5), Vector3(4, 0, -3.5)]
+	# Big tables for GROUPS: in the green games room where there's room for 5 seats.
+	var larges := [Vector3(3, 0, 1.2), Vector3(6.5, 0, 1.2)]
 	for i in larges.size():
 		_place(LARGE_TABLE, larges[i], Globals.SeatKind.LARGE, "Big Table %d" % (i + 1))
 
-	# The cash register sits past the left end of the counter; the pay line forms
+	# The cash register sits at the left end of the counter; the pay line forms
 	# in front of it, out into the room.
 	var register := REGISTER.instantiate()
 	add_child(register)
-	register.global_position = Vector3(-6, 0, 4.5)
+	register.global_position = Vector3(-5, 0, 4.3)
 
 
 func _place(scene: PackedScene, pos: Vector3, seat_kind: int, label: String) -> void:
@@ -89,19 +100,23 @@ func _build_room() -> void:
 	_add_box(Vector3(half_w, wall_y, 0), Vector3(WALL_THICK, WALL_HEIGHT, ROOM_DEPTH), wall_color)
 
 
+# Adds a box as a StaticBody3D. It always gets a collision shape; the visible
+# mesh is only added when `visible` is true (gated by show_placeholder_room), so
+# the room can exist purely as invisible walls behind the imported bar model.
 func _add_box(center: Vector3, size: Vector3, color: Color) -> void:
 	var body := StaticBody3D.new()
 	body.position = center
 	add_child(body)
 
-	var mesh_instance := MeshInstance3D.new()
-	var box_mesh := BoxMesh.new()
-	box_mesh.size = size
-	mesh_instance.mesh = box_mesh
-	var material := StandardMaterial3D.new()
-	material.albedo_color = color
-	mesh_instance.material_override = material
-	body.add_child(mesh_instance)
+	if show_placeholder_room:
+		var mesh_instance := MeshInstance3D.new()
+		var box_mesh := BoxMesh.new()
+		box_mesh.size = size
+		mesh_instance.mesh = box_mesh
+		var material := StandardMaterial3D.new()
+		material.albedo_color = color
+		mesh_instance.material_override = material
+		body.add_child(mesh_instance)
 
 	var collision := CollisionShape3D.new()
 	var box_shape := BoxShape3D.new()
