@@ -14,6 +14,7 @@ extends Node3D
 const STOOL := preload("res://scenes/Stool.tscn")
 const SMALL_TABLE := preload("res://scenes/Table.tscn")
 const LARGE_TABLE := preload("res://scenes/LargeTable.tscn")
+const REGISTER := preload("res://scenes/Register.tscn")
 
 # Room footprint, centered on the origin. The camera looks from the +Z side, so
 # the +Z edge is left open (the counter sits there).
@@ -48,6 +49,12 @@ func _place_furniture() -> void:
 	var larges := [Vector3(-4, 0, -3.5), Vector3(4, 0, -3.5)]
 	for i in larges.size():
 		_place(LARGE_TABLE, larges[i], Globals.SeatKind.LARGE, "Big Table %d" % (i + 1))
+
+	# The cash register sits past the left end of the counter; the pay line forms
+	# in front of it, out into the room.
+	var register := REGISTER.instantiate()
+	add_child(register)
+	register.global_position = Vector3(-6, 0, 4.5)
 
 
 func _place(scene: PackedScene, pos: Vector3, seat_kind: int, label: String) -> void:

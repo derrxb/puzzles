@@ -39,6 +39,19 @@ const PARTY_LABELS := ["Single", "Duo", "Group"]
 enum SeatKind { BAR, SMALL, LARGE }
 const SEAT_LABELS := ["Bar", "Table", "Big Table"]
 
+# How a party pays at the register. Each party uses one method:
+#   CASH - you make change with $1/$5/$10 buttons
+#   CARD - hold Space to swipe the card until it approves
+#   LINE - press Space once to scan their LINE Pay QR code
+enum PayMethod { CASH, CARD, LINE }
+const PAY_LABELS := ["Cash", "Credit Card", "LINE Pay"]
+
+
+func pay_label(method: int) -> String:
+	if method < 0 or method >= PAY_LABELS.size():
+		return "Pay"
+	return PAY_LABELS[method]
+
 
 func color_for(drink_index: int) -> Color:
 	if drink_index < 0 or drink_index >= DRINK_COLORS.size():
@@ -64,3 +77,22 @@ func party_label(party_kind: int) -> String:
 	if party_kind < 0 or party_kind >= PARTY_LABELS.size():
 		return "Party"
 	return PARTY_LABELS[party_kind]
+
+
+# --- Money -------------------------------------------------------------------
+# What one beer costs, based on how well it was poured (quality = fill level).
+func price_for(quality: float) -> int:
+	if quality >= 0.9:
+		return 8
+	if quality >= 0.75:
+		return 6
+	return 4
+
+
+# The bill a customer hands over: the next whole $10 at or above their tab.
+# (So the player usually has to make change.)
+func tender_for(tab: int) -> int:
+	if tab <= 0:
+		return 0
+	return int(ceil(tab / 10.0)) * 10
+

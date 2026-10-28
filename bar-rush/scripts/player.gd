@@ -83,17 +83,27 @@ func _process(delta: float) -> void:
 	if not Input.is_action_pressed("pour"):
 		_pour_locked = false
 
-	# Space is the single action key. If a customer we can serve is right next to
-	# us, pressing Space serves them; otherwise holding Space pours at a tap.
-	var customer := _nearest_waiting_customer()
-	var can_serve := customer != null and _find_tray_glass(customer.get_order()) != -1
+	var gm := get_tree().get_first_node_in_group("game_manager")
+	var register := get_tree().get_first_node_in_group("register")
+	var at_register: bool = register != null and gm != null \
+		and register.is_in_range(global_position) and gm.register_party() != null
 
+	# Space is the single action key. Priority: ring up at the register > serve a
+	# nearby customer > pour at a tap.
 	var pouring := false
-	if can_serve:
-		if Input.is_action_just_pressed("pour"):
-			_serve_to(customer)
+	if at_register:
+		_handle_register(gm, delta)
 	else:
-		pouring = _handle_pour(tap, delta)
+		if gm != null and gm.register_active():
+			gm.register_end()                    # we walked away from the register
+		var customer := _nearest_waiting_customer()
+		var can_serve := customer != null and _find_tray_glass(customer.get_order()) != -1
+		if can_serve:
+			if Input.is_action_just_pressed("pour"):
+				_serve_to(customer)
+		else:
+			pouring = _handle_pour(tap, delta)
+
 	_settle_foam(pouring, delta)
 	_maybe_stock(near_tap)          # stepping away from the tap stocks a partial pour
 
@@ -102,7 +112,25 @@ func _process(delta: float) -> void:
 
 	_update_active_visual()
 	pour_state_changed.emit(_beer_type != -1, _liquid, _foam, _ruined, _beer_type)
-	_update_hint(tap, near_tap)
+	_update_hint(tap, near_tap, at_register, gm)
+
+
+# At the register, Space rings up the front party -- how depends on their method.
+func _handle_register(gm: Node, delta: float) -> void:
+	if not gm.register_active():
+		gm.register_begin()
+	match gm.register_method():
+		Globals.PayMethod.CASH:
+			if Input.is_action_just_pressed("pour"):
+				gm.register_cash_give()
+		Globals.PayMethod.CARD:
+			if Input.is_action_pressed("pour"):
+				gm.register_card_swipe(delta)
+			else:
+				gm.register_card_release()
+		Globals.PayMethod.LINE:
+			if Input.is_action_just_pressed("pour"):
+				gm.register_line_scan()
 
 
 # ------------------------------------------------------------------------------
@@ -365,9 +393,25 @@ func _unit_cylinder(radius: float) -> CylinderMesh:
 # ------------------------------------------------------------------------------
 # On-screen hint
 # ------------------------------------------------------------------------------
-func _update_hint(tap: Dictionary, near_tap: bool) -> void:
+func _update_hint(tap: Dictionary, near_tap: bool, at_register: bool, gm: Node) -> void:
 	var hint := ""
 	var tray_count := _tray.size()
+
+	if at_register and gm != null and gm.register_active():
+		match gm.register_method():
+			Globals.PayMethod.CASH:
+				hint = "Cash: click the $ buttons to make change, then Space to give it"
+			Globals.PayMethod.CARD:
+				hint = "Card: type the total on the keypad, then hold Space to swipe"
+			Globals.PayMethod.LINE:
+				hint = "LINE Pay: press Space to scan their QR code"
+		if hint != _last_hint:
+			_last_hint = hint
+			var ui0 := get_tree().get_first_node_in_group("ui")
+			if ui0 != null and ui0.has_method("set_hint"):
+				ui0.set_hint(hint)
+		return
+
 	var customer := _nearest_waiting_customer()
 
 	if customer != null and _find_tray_glass(customer.get_order()) != -1:

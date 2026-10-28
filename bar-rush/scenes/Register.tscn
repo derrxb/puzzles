@@ -1,0 +1,35 @@
+[gd_scene load_steps=7 format=3 uid="uid://b0barregister01"]
+
+[ext_resource type="Script" path="res://scripts/register.gd" id="1_reg"]
+
+[sub_resource type="BoxShape3D" id="shape_stand"]
+size = Vector3(0.9, 1.1, 0.7)
+
+[sub_resource type="BoxMesh" id="mesh_stand"]
+size = Vector3(0.9, 1.1, 0.7)
+
+[sub_resource type="StandardMaterial3D" id="mat_stand"]
+albedo_color = Color(0.3, 0.3, 0.34, 1)
+
+[sub_resource type="BoxMesh" id="mesh_screen"]
+size = Vector3(0.5, 0.4, 0.08)
+
+[sub_resource type="StandardMaterial3D" id="mat_screen"]
+albedo_color = Color(0.3, 0.9, 0.7, 1)
+
+[node name="Register" type="StaticBody3D"]
+script = ExtResource("1_reg")
+
+[node name="Collision" type="CollisionShape3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.55, 0)
+shape = SubResource("shape_stand")
+
+[node name="Stand" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.55, 0)
+mesh = SubResource("mesh_stand")
+material_override = SubResource("mat_stand")
+
+[node name="Screen" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 0.7, 0.7, 0, -0.7, 0.7, 0, 1.25, 0.1)
+mesh = SubResource("mesh_screen")
+material_override = SubResource("mat_screen")

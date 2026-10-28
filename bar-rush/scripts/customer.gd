@@ -18,7 +18,7 @@ extends Node3D
 enum State { WALKING, ORDERING, DRINKING, IDLE, LEAVING }
 
 @export var move_speed: float = 2.5
-@export var patience_time: float = 35.0           # seconds to fill one order
+@export var patience_time: float = 50.0           # seconds to fill one order
 @export var drink_time_min: float = 8.0           # happy drinking before reorder
 @export var drink_time_max: float = 16.0
 
@@ -27,11 +27,17 @@ signal order_timed_out()
 
 # Starts IDLE: a freshly spawned member just stands at the door until its Party
 # either seats it (walk_to_seat) or sends it home (leave).
+# Running bill for this one person: money owed and how many beers they drank.
+# Collected later at the register (serving no longer pays instantly).
+var tab: int = 0
+var beers: int = 0
+
 var _state: int = State.IDLE
 var _order: int = 0                 # which beer they currently want
 var _patience_left: float = 0.0
 var _drink_left: float = 0.0
 var _target: Vector3
+var _order_on_arrival: bool = true   # false when walking to the pay line
 
 var _body: MeshInstance3D
 var _body_material: StandardMaterial3D
@@ -55,7 +61,10 @@ func _process(delta: float) -> void:
 		State.WALKING:
 			_move_toward(_target, delta)
 			if _reached(_target):
-				_begin_order()
+				if _order_on_arrival:
+					_begin_order()
+				else:
+					_state = State.IDLE      # arrived at the pay line; just wait
 		State.ORDERING:
 			_patience_left -= delta
 			_update_patience_bar()
@@ -79,6 +88,15 @@ func _process(delta: float) -> void:
 func walk_to_seat(seat_position: Vector3) -> void:
 	_target = seat_position
 	_state = State.WALKING
+	_order_on_arrival = true
+
+
+# Walk somewhere and just wait there (used for the pay line) -- no ordering.
+func walk_to(target_position: Vector3) -> void:
+	_target = target_position
+	_state = State.WALKING
+	_order_on_arrival = false
+	_hide_order_ui()
 
 
 func leave(exit_position: Vector3, angry: bool = false) -> void:
@@ -107,6 +125,9 @@ func serve(beer_type: int, quality: float) -> bool:
 	var correct := (beer_type == _order)
 	served.emit(correct, quality)
 	if correct:
+		# Add this beer to their running tab (paid later at the register).
+		tab += Globals.price_for(quality)
+		beers += 1
 		_hide_order_ui()
 		_flash(Color(0.3, 0.85, 0.4))          # happy green
 		_state = State.DRINKING

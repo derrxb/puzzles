@@ -36,6 +36,16 @@ const PERFECT := 0.9       # a perfect pour line
 var _seat_header: Label
 var _table_grid: GridContainer
 
+# Register panel pieces.
+var _reg_panel: PanelContainer
+var _reg_header: Label
+var _reg_info: Label
+var _reg_cash: HBoxContainer
+var _reg_card: VBoxContainer
+var _reg_line: Label
+var _reg_typed: Label
+var _reg_swipe_fill: ColorRect
+
 var _game_manager: Node
 
 
@@ -44,6 +54,7 @@ func _ready() -> void:
 	_build_pour_meter()
 	_build_seating_panel()
 	_build_tray_display()
+	_build_register_panel()
 	# Connect after everyone's _ready has run so the groups are populated.
 	_connect_signals.call_deferred()
 
@@ -61,7 +72,9 @@ func _connect_signals() -> void:
 	if _game_manager != null:
 		_game_manager.stats_changed.connect(_on_stats_changed)
 		_game_manager.queue_changed.connect(_refresh_seating)
+		_game_manager.register_state_changed.connect(_on_register_state)
 		_on_stats_changed(_game_manager.reputation, _game_manager.money)
+		_on_register_state({"active": false})
 
 	var player := get_tree().get_first_node_in_group("player")
 	if player != null:
@@ -255,3 +268,117 @@ func _refresh_seating() -> void:
 func _on_table_pressed(table) -> void:
 	if _game_manager != null:
 		_game_manager.seat_front_party(table)
+
+
+# ------------------------------------------------------------------------------
+# Register panel (paying at the cash register)
+# ------------------------------------------------------------------------------
+func _build_register_panel() -> void:
+	_reg_panel = PanelContainer.new()
+	_reg_panel.anchor_left = 0.5
+	_reg_panel.anchor_right = 0.5
+	_reg_panel.anchor_top = 0.5
+	_reg_panel.anchor_bottom = 0.5
+	_reg_panel.offset_left = -190.0
+	_reg_panel.offset_right = 190.0
+	_reg_panel.offset_top = -150.0
+	_reg_panel.offset_bottom = 150.0
+	_reg_panel.visible = false
+	add_child(_reg_panel)
+
+	var margin := MarginContainer.new()
+	for side in ["left", "right", "top", "bottom"]:
+		margin.add_theme_constant_override("margin_" + side, 12)
+	_reg_panel.add_child(margin)
+
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 8)
+	margin.add_child(vbox)
+
+	_reg_header = _centered_label("", 20)
+	vbox.add_child(_reg_header)
+	_reg_info = _centered_label("", 16)
+	vbox.add_child(_reg_info)
+
+	# CASH: change-making buttons.
+	_reg_cash = HBoxContainer.new()
+	_reg_cash.alignment = BoxContainer.ALIGNMENT_CENTER
+	_reg_cash.add_child(_make_button("+$1", func(): _game_manager.register_change_add(1)))
+	_reg_cash.add_child(_make_button("+$5", func(): _game_manager.register_change_add(5)))
+	_reg_cash.add_child(_make_button("+$10", func(): _game_manager.register_change_add(10)))
+	_reg_cash.add_child(_make_button("Reset", func(): _game_manager.register_change_reset()))
+	vbox.add_child(_reg_cash)
+
+	# CARD: keypad + swipe bar.
+	_reg_card = VBoxContainer.new()
+	_reg_typed = _centered_label("$0", 18)
+	_reg_card.add_child(_reg_typed)
+	var pad := GridContainer.new()
+	pad.columns = 3
+	for d in [1, 2, 3, 4, 5, 6, 7, 8, 9]:
+		pad.add_child(_make_digit(d))
+	pad.add_child(_make_button("Clr", func(): _game_manager.register_type_clear()))
+	pad.add_child(_make_digit(0))
+	_reg_card.add_child(pad)
+	var swipe_bg := ColorRect.new()
+	swipe_bg.color = Color(0.15, 0.15, 0.18)
+	swipe_bg.custom_minimum_size = Vector2(240, 16)
+	_reg_swipe_fill = ColorRect.new()
+	_reg_swipe_fill.color = Color(0.3, 0.9, 0.7)
+	_reg_swipe_fill.size = Vector2(0, 16)
+	swipe_bg.add_child(_reg_swipe_fill)
+	_reg_card.add_child(swipe_bg)
+	vbox.add_child(_reg_card)
+
+	# LINE Pay: just a prompt.
+	_reg_line = _centered_label("Press Space to scan their QR code", 16)
+	vbox.add_child(_reg_line)
+
+
+func _on_register_state(info: Dictionary) -> void:
+	if not info.get("active", false):
+		_reg_panel.visible = false
+		return
+	_reg_panel.visible = true
+
+	var method: int = info["method"]
+	var person := ""
+	if info["split"] and info["count"] > 1:
+		person = "   (person %d of %d)" % [info["index"] + 1, info["count"]]
+	_reg_header.text = "%s pays by %s%s" % [info["party_label"], Globals.pay_label(method), person]
+
+	_reg_cash.visible = method == Globals.PayMethod.CASH
+	_reg_card.visible = method == Globals.PayMethod.CARD
+	_reg_line.visible = method == Globals.PayMethod.LINE
+
+	match method:
+		Globals.PayMethod.CASH:
+			_reg_info.text = "%d beer(s) — Bill $%d\nPaid $%d · change due $%d · given $%d" % [
+				info["beers"], info["tab"], info["tender"], info["change_due"], info["change_given"]]
+		Globals.PayMethod.CARD:
+			_reg_info.text = "%d beer(s) — Bill $%d" % [info["beers"], info["tab"]]
+			_reg_typed.text = "Typed: $%d" % info["typed"]
+			_reg_swipe_fill.size = Vector2(240.0 * info["swipe"], 16)
+		Globals.PayMethod.LINE:
+			_reg_info.text = "%d beer(s) — Bill $%d" % [info["beers"], info["tab"]]
+
+
+func _centered_label(text: String, size: int) -> Label:
+	var l := Label.new()
+	l.text = text
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	l.add_theme_font_size_override("font_size", size)
+	return l
+
+
+func _make_button(text: String, on_press: Callable) -> Button:
+	var b := Button.new()
+	b.text = text
+	b.focus_mode = Control.FOCUS_NONE       # so clicking doesn't steal the Space key
+	b.custom_minimum_size = Vector2(70, 40)
+	b.pressed.connect(on_press)
+	return b
+
+
+func _make_digit(d: int) -> Button:
+	return _make_button(str(d), func(): _game_manager.register_type_digit(d))

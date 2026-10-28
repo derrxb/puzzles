@@ -31,12 +31,20 @@ pour their beers, and serve them before they get fed up.
    money).
 5. **Serve.** Carry the tray to a seated customer and press **Space** — if your
    tray has the beer they ordered, it's handed over. A fuller pour earns more.
-6. Served customers drink happily and order again; a party eventually leaves
-   satisfied. But if anyone's patience runs out, the **whole party storms off**
-   and your reputation drops.
+6. Served customers drink happily and order again, running up a **tab**. If
+   anyone's patience runs out, the **whole party storms off** and reputation drops.
+7. **They pay at the register.** When a party is done it frees its table and
+   lines up at the **cash register**. Stand at the register and ring up the
+   front party with **Space** — but how depends on their payment method:
+   - **Cash:** click **$1 / $5 / $10** to make the right change, then **Space**.
+   - **Credit card:** **type the total** on the keypad, then **hold Space** to swipe.
+   - **LINE Pay:** press **Space** to scan their QR.
+   Prompt, accurate service earns a **tip**. Groups may **split the bill** (ring
+   up each person). Ignore the line too long and they **dine & dash** — you lose
+   the tab and reputation.
 
 Reputation (0–100) starts at **50** and climbs slowly with good service. Money
-goes up with every beer sold.
+comes in **only when you collect at the register** (serving builds the tab).
 
 ### Controls
 
@@ -47,9 +55,10 @@ goes up with every beer sold.
 | Serve a customer | **Space** (next to them) |
 | Dump a wrong beer | **Q** |
 | Seat a party | **click a table** in the seating panel |
+| Ring up / pay | **Space** at the register (+ click $ or keypad buttons) |
 
-Space is the one action key: held at a tap it pours; tapped next to a customer
-you can serve, it hands over their beer.
+Space is the one action key — by context it pours (at a tap), serves (next to a
+customer), or rings up (at the register). Money/keypad buttons are mouse-clicked.
 
 ---
 
@@ -70,7 +79,8 @@ bar-rush/
 │   ├── Table.tscn          # Small (2-seat) table for duos
 │   ├── LargeTable.tscn     # Big (5-seat) table for groups
 │   ├── Stool.tscn          # A single bar stool
-│   └── UI.tscn             # HUD labels (the pour meter & seating panel are code-built)
+│   ├── Register.tscn       # The cash register (where parties pay)
+│   └── UI.tscn             # HUD labels (pour meter, seating & register panels are code-built)
 │
 └── scripts/
     ├── globals.gd          # AUTOLOAD "Globals": constants (beers, party/seat kinds)
@@ -80,6 +90,7 @@ bar-rush/
     ├── party.gd            # A party: queues, gets seated, relays member events, leaves
     ├── customer.gd         # One person's order cycle (order → served → reorder) + patience
     ├── counter.gd          # Recolors the taps; reports the nearest tap to pour from
+    ├── register.gd         # The cash register: proximity + pay-line positions
     ├── table.gd            # A seat group (bar/small/large): tracks free seats
     └── ui.gd               # HUD + pour meter + seating panel (a pure view of state)
 ```
