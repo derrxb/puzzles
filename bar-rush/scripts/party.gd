@@ -58,6 +58,7 @@ func setup(party_kind: int, door_position: Vector3, exit_position: Vector3) -> v
 	_spawn_members()
 	_build_bar()
 	_state = State.QUEUING
+	add_to_group("parties")          # so the GameManager can count active parties
 
 
 func is_queuing() -> bool:
@@ -66,6 +67,11 @@ func is_queuing() -> bool:
 
 func is_paying() -> bool:
 	return _state == State.PAYING
+
+
+# Still in the bar (not already heading for the door). Counts toward the cap.
+func is_active() -> bool:
+	return _state == State.QUEUING or _state == State.SEATED or _state == State.PAYING
 
 
 func seat_at(table: Node) -> void:
@@ -106,7 +112,8 @@ func _process(delta: float) -> void:
 # ------------------------------------------------------------------------------
 func _begin_paying() -> void:
 	_state = State.PAYING
-	_pay_left = pay_patience
+	# Patient parties wait longer to be rung up before they dine & dash.
+	_pay_left = pay_patience * lerpf(0.6, 1.4, avg_trait(Globals.Trait.PATIENCE))
 	_release_seats()                 # they've vacated the table
 	_bar_holder.visible = true
 	wants_to_pay.emit()              # GameManager enqueues us + sets our pay slot
@@ -158,6 +165,29 @@ func total_beers() -> int:
 
 func pay_fraction() -> float:
 	return clampf(_pay_left / pay_patience, 0.0, 1.0)
+
+
+# --- Personality aggregates (for the seating panel + tips) --------------------
+func avg_trait(index: int) -> float:
+	var sum := 0.0
+	var n := 0
+	for m in _members:
+		if is_instance_valid(m):
+			sum += m.personality()[index]
+			n += 1
+	return sum / n if n > 0 else 0.5
+
+
+func max_trait(index: int) -> float:
+	var v := 0.0
+	for m in _members:
+		if is_instance_valid(m):
+			v = maxf(v, m.personality()[index])
+	return v
+
+
+func avg_generosity() -> float:
+	return avg_trait(Globals.Trait.GENEROSITY)
 
 
 # ------------------------------------------------------------------------------

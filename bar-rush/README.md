@@ -23,12 +23,14 @@ pour their beers, and serve them before they get fed up.
    - groups → a **big table**
 3. **They order beers.** Once seated, each person floats a beer-mug bubble (the
    beer they want: **Lager**, **Amber**, or **Stout**) and a draining patience bar.
-4. **Pour the round.** Walk to the matching **tap** and **hold Space**. Beer
-   rises — but **foam builds while you pour**; if it overflows the glass, it's
-   spilled. Stop to let the foam settle, then top off. Once the pour hits the
-   **green**, it's **automatically added to your tray** (holds up to 4, mixed
-   types). Poured the wrong beer? Press **Q** to dump one (it costs a little
-   money).
+4. **Pour the round.** Walk to the matching **tap** and **hold Space**. It pours
+   like a real keg — slow, and **foam builds the harder/fuller you pour**; ease
+   off and let it settle, then top off. Fill into the **green window** (near the
+   brim with a small head) for a **perfect pour** — it **auto-adds to your tray**
+   (holds **2** for now; unlocks up to 4 as you progress) and builds your
+   **perfect-pour combo**. Spills and sloppy pours reset
+   the combo. Perfect pours earn **XP** toward bartender **levels** (which grow
+   your tips). Press **Q** to dump a wrong beer.
 5. **Serve.** Carry the tray to a seated customer and press **Space** — if your
    tray has the beer they ordered, it's handed over. A fuller pour earns more.
 6. Served customers drink happily and order again, running up a **tab**. If
@@ -41,10 +43,23 @@ pour their beers, and serve them before they get fed up.
    - **LINE Pay:** press **Space** to scan their QR.
    Prompt, accurate service earns a **tip**. Groups may **split the bill** (ring
    up each person). Ignore the line too long and they **dine & dash** — you lose
-   the tab and reputation.
+   the tab and reputation. Prompt, accurate service earns a **tip** (into your
+   **Tip Jar**).
 
-Reputation (0–100) starts at **50** and climbs slowly with good service. Money
-comes in **only when you collect at the register** (serving builds the tab).
+Every customer has a **personality** — **Patience**, **Generosity**, **Thirst**,
+and **Volatility**, each a random amount. **Click a customer** to inspect their
+traits so you can prioritize who to serve; the seating panel also summarizes the
+next party at the door.
+
+Reputation (0–100) starts at **50** and climbs slowly with good service. **Money**
+comes in only when you collect bills at the register. **Tips** accumulate
+separately in the **Tip Jar** (for future bar upgrades), and perfect pours raise
+your **bartender level**, which grows your tips.
+
+**Easing in:** the early game is gentle so you can learn the ropes — at first only
+**1–2 parties** are in the bar at once and they're all **singles & duos**. As your
+bartender level rises you unlock **big groups** (Lv 3) and room for **more parties
+at once** (3 at Lv 3, 4 at Lv 6), with a toast when each unlocks.
 
 ### Controls
 
@@ -56,6 +71,7 @@ comes in **only when you collect at the register** (serving builds the tab).
 | Dump a wrong beer | **Q** |
 | Seat a party | **click a table** in the seating panel |
 | Ring up / pay | **Space** at the register (+ click $ or keypad buttons) |
+| Inspect a customer | **click** them (shows their personality) |
 
 Space is the one action key — by context it pours (at a tap), serves (next to a
 customer), or rings up (at the register). Money/keypad buttons are mouse-clicked.

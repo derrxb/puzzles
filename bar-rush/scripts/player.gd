@@ -19,18 +19,30 @@ extends CharacterBody3D
 @export var gravity: float = 20.0
 @export var serve_range: float = 2.0
 
-@export var pour_rate: float = 0.6      # how fast liquid rises while pouring
-@export var foam_gain: float = 0.45     # how fast foam builds while pouring
-@export var foam_settle: float = 1.1    # how fast foam settles when NOT pouring
+# --- Pour model (modeled on a real keg; see research notes) -------------------
+# A full pour takes ~6s. Foam grows from AGITATION, which is worse when the glass
+# is upright/full (auto-tilt). Foam always settles, turning partly back to liquid.
+@export var fill_rate: float = 0.15     # liquid per second at full flow
+@export var foam_conv: float = 1.1      # foam made per unit beer at max agitation
+@export var agit_min: float = 0.10      # agitation when tilted/gentle (low fill)
+@export var agit_max: float = 1.0       # agitation when upright/full
+@export var foam_settle: float = 0.40   # fraction of foam that collapses per second
+@export var return_frac: float = 0.25   # settled foam that becomes liquid
 
 const CAPACITY := 1.0
-const PERFECT := 0.9
-const GOOD := 0.75
+# A PERFECT pour: beer near the brim with a 1-2 finger head and no spill.
+const PERFECT_LIQ_LO := 0.82
+const PERFECT_LIQ_HI := 0.90
+const PERFECT_FOAM_LO := 0.08
+const PERFECT_FOAM_HI := 0.18
+const PERFECT_TOTAL_MAX := 0.98
+const GOOD_LIQ := 0.6
 const MIN_SERVE := 0.2
-# Once a pour reaches this ("the green"), it is auto-added to the tray so you
-# don't have to step back for it.
-const AUTO_COMMIT := 0.75
-const TRAY_CAP := 4                     # how many beers fit on the tray
+const MAX_TRAY := 4                     # most slots we ever build; capacity is dynamic
+
+# Pour grades -> a "quality" number the price/tip reads (price_for in globals).
+enum Grade { POOR, GOOD, PERFECT }
+const GRADE_QUALITY := [0.5, 0.8, 1.0]  # POOR/GOOD/PERFECT -> quality for pricing
 
 const GLASS_H := 0.34
 const GLASS_BOTTOM := -0.17
@@ -38,7 +50,7 @@ const GLASS_BOTTOM := -0.17
 # The tray's contents: each entry is {"type": int, "quality": float}.
 signal tray_changed(types: Array)
 # The glass being poured right now (drives the on-screen pour meter).
-signal pour_state_changed(active: bool, liquid: float, foam: float, ruined: bool, beer_type: int)
+signal pour_state_changed(active: bool, liquid: float, foam: float, ruined: bool, beer_type: int, perfect: bool)
 
 var _tray: Array = []
 
@@ -104,14 +116,20 @@ func _process(delta: float) -> void:
 		else:
 			pouring = _handle_pour(tap, delta)
 
-	_settle_foam(pouring, delta)
-	_maybe_stock(near_tap)          # stepping away from the tap stocks a partial pour
+	_apply_settle(delta)            # foam always settles (and partly becomes beer)
+
+	# When we're NOT actively pouring and the glass has settled into the perfect
+	# window, it auto-adds to the tray (hands-free) and counts as a perfect pour.
+	if not pouring and _beer_type != -1 and not _ruined and _is_perfect() and _tray.size() < _capacity():
+		_stock_active(Grade.PERFECT)
+
+	_maybe_stock(near_tap)          # stepping away stocks a non-perfect pour
 
 	if Input.is_action_just_pressed("dump"):
 		_dump_one()
 
 	_update_active_visual()
-	pour_state_changed.emit(_beer_type != -1, _liquid, _foam, _ruined, _beer_type)
+	pour_state_changed.emit(_beer_type != -1, _liquid, _foam, _ruined, _beer_type, _is_perfect())
 	_update_hint(tap, near_tap, at_register, gm)
 
 
@@ -175,30 +193,36 @@ func _handle_pour(tap: Dictionary, delta: float) -> bool:
 
 	# Start a fresh glass if we aren't filling one (or the last was spilled/empty).
 	if _beer_type == -1 or _ruined or _liquid <= 0.0:
-		if _beer_type == -1 and _tray.size() >= TRAY_CAP:
+		if _beer_type == -1 and _tray.size() >= _capacity():
 			return false                 # tray is full; serve some first
 		_begin_active(tap_type)
 
 	if _beer_type != tap_type:
 		return false                     # can't mix two beers in one glass
 
-	_liquid = minf(_liquid + pour_rate * delta, CAPACITY)
-	_foam += foam_gain * delta
+	# Fill rises slowly; foam builds from agitation, which is gentle when the glass
+	# is low (tilted) and harsh when it's full (upright) -- the real pouring skill.
+	var d_liquid := fill_rate * delta
+	_liquid = minf(_liquid + d_liquid, CAPACITY)
+	var tilt := clampf(1.0 - _liquid / 0.65, 0.0, 1.0)
+	var agitation := agit_min + (agit_max - agit_min) * (1.0 - tilt)
+	_foam += foam_conv * agitation * d_liquid
+
 	if _liquid + _foam >= CAPACITY:
 		_ruined = true
 		_foam = CAPACITY - _liquid
 		_pour_locked = true                         # re-press to pour a fresh one
-	elif _liquid >= AUTO_COMMIT and _tray.size() < TRAY_CAP:
-		# Reached the green: auto-add to the tray, no need to step back.
-		_stock_active()
-		_pour_locked = true                         # re-press to pour the next
+		_report_reset()                             # a spill breaks the combo
 	return true
 
 
-func _settle_foam(pouring: bool, delta: float) -> void:
-	if pouring or _beer_type == -1 or _ruined:
+# Foam always collapses over time, and a little of it settles back into beer.
+func _apply_settle(delta: float) -> void:
+	if _beer_type == -1 or _ruined:
 		return
-	_foam = maxf(0.0, _foam - foam_settle * delta)
+	var s := foam_settle * _foam * delta
+	_foam = maxf(0.0, _foam - s)
+	_liquid = minf(_liquid + s * return_frac, CAPACITY)
 
 
 # Stepping away from the taps finalizes the glass you were filling: a decent pour
@@ -207,17 +231,50 @@ func _settle_foam(pouring: bool, delta: float) -> void:
 func _maybe_stock(near_tap: bool) -> void:
 	if _beer_type == -1 or near_tap:
 		return
-	if not _ruined and _liquid >= MIN_SERVE and _tray.size() < TRAY_CAP:
-		_stock_active()
+	if not _ruined and _liquid >= MIN_SERVE and _tray.size() < _capacity():
+		_stock_active(_grade())
 	else:
+		# ruined, full, or basically empty: tossed (a spill already broke the combo).
 		_clear_active()
 
 
-# Move the active glass onto the tray.
-func _stock_active() -> void:
-	_tray.append({"type": _beer_type, "quality": _liquid})
+# Move the active glass onto the tray and report the pour's grade (combo / XP).
+func _stock_active(grade: int) -> void:
+	_tray.append({"type": _beer_type, "quality": GRADE_QUALITY[grade]})
 	tray_changed.emit(_tray_types())
+	_pour_locked = true                 # re-press to pour the next glass
+	_report_grade(grade)
 	_clear_active()
+
+
+func _is_perfect() -> bool:
+	return _liquid >= PERFECT_LIQ_LO and _liquid <= PERFECT_LIQ_HI \
+		and _foam >= PERFECT_FOAM_LO and _foam <= PERFECT_FOAM_HI \
+		and _liquid + _foam <= PERFECT_TOTAL_MAX
+
+
+func _grade() -> int:
+	if _is_perfect():
+		return Grade.PERFECT
+	if _liquid >= GOOD_LIQ:
+		return Grade.GOOD
+	return Grade.POOR
+
+
+func _report_grade(grade: int) -> void:
+	var gm := get_tree().get_first_node_in_group("game_manager")
+	if gm == null:
+		return
+	if grade == Grade.PERFECT and gm.has_method("add_perfect"):
+		gm.add_perfect()
+	elif gm.has_method("reset_combo"):
+		gm.reset_combo()
+
+
+func _report_reset() -> void:
+	var gm := get_tree().get_first_node_in_group("game_manager")
+	if gm != null and gm.has_method("reset_combo"):
+		gm.reset_combo()
 
 
 func _begin_active(beer_type: int) -> void:
@@ -294,6 +351,14 @@ func _tray_types() -> Array:
 	return types
 
 
+# How many beers the tray can hold right now (a progression stat on GameManager).
+func _capacity() -> int:
+	var gm := get_tree().get_first_node_in_group("game_manager")
+	if gm != null and "tray_capacity" in gm:
+		return gm.tray_capacity
+	return 2
+
+
 # ------------------------------------------------------------------------------
 # Carry visuals: a tray of glasses + the active glass being poured
 # ------------------------------------------------------------------------------
@@ -306,15 +371,16 @@ func _build_carry_visuals() -> void:
 	tray.material_override = _solid(Color(0.25, 0.2, 0.15))
 	$Hold.add_child(tray)
 
-	# One small glass per tray slot (hidden until that slot is filled).
-	for i in TRAY_CAP:
+	# One small glass per tray slot (hidden until that slot is filled). We always
+	# build the max; only as many as the current capacity are ever used.
+	for i in MAX_TRAY:
 		var glass := MeshInstance3D.new()
 		var cyl := CylinderMesh.new()
 		cyl.top_radius = 0.07
 		cyl.bottom_radius = 0.06
 		cyl.height = 0.2
 		glass.mesh = cyl
-		var slot_x := (float(i) - float(TRAY_CAP - 1) / 2.0) * 0.17
+		var slot_x := (float(i) - float(MAX_TRAY - 1) / 2.0) * 0.17
 		glass.position = Vector3(slot_x, 0.12, 0)
 		var mat := _solid(Color.WHITE)
 		glass.material_override = mat
@@ -354,7 +420,7 @@ func _build_carry_visuals() -> void:
 
 func _update_active_visual() -> void:
 	# Tray glasses reflect what's stocked.
-	for i in TRAY_CAP:
+	for i in MAX_TRAY:
 		if i < _tray.size():
 			_tray_glasses[i].visible = true
 			_tray_materials[i].albedo_color = Globals.color_for(_tray[i]["type"])
@@ -421,10 +487,12 @@ func _update_hint(tap: Dictionary, near_tap: bool, at_register: bool, gm: Node) 
 		# We're filling a glass.
 		if _ruined:
 			hint = "Spilled! Ease off the pour -- or press Q to toss it"
+		elif _is_perfect():
+			hint = "Perfect pour! let go -- it trays up on its own"
 		else:
-			hint = "Hold Space -- the beer trays up when it reaches the green"
+			hint = "Hold Space to fill, then ease off and let the foam settle into the green"
 	elif near_tap:
-		if tray_count >= TRAY_CAP:
+		if tray_count >= _capacity():
 			hint = "Tray full (%d) -- go serve some beers" % tray_count
 		else:
 			hint = "Hold Space to pour a %s" % Globals.name_for(tap["type"])
@@ -443,10 +511,7 @@ func _update_hint(tap: Dictionary, near_tap: bool, at_register: bool, gm: Node) 
 
 
 func _quality_word() -> String:
-	if _liquid >= PERFECT:
-		return "perfect"
-	if _liquid >= GOOD:
-		return "good"
-	if _liquid >= MIN_SERVE:
-		return "a bit low"
-	return "nearly empty"
+	match _grade():
+		Grade.PERFECT: return "perfect"
+		Grade.GOOD: return "good"
+		_: return "low"

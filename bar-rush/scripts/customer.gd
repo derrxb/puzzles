@@ -32,8 +32,19 @@ signal order_timed_out()
 var tab: int = 0
 var beers: int = 0
 
+# Personality: four traits, each a random 0..1 "range" picked when they arrive.
+#   patience   - high = very patient, low = short fuse
+#   generosity - high = big tipper, low = stiffs you (used at the register)
+#   thirst     - high = drinks fast / orders more rounds
+#   volatility - high = unstable; patience swings unpredictably each order
+var patience: float = 0.5
+var generosity: float = 0.5
+var thirst: float = 0.5
+var volatility: float = 0.5
+
 var _state: int = State.IDLE
 var _order: int = 0                 # which beer they currently want
+var _patience_max: float = 50.0     # this order's full patience (after traits)
 var _patience_left: float = 0.0
 var _drink_left: float = 0.0
 var _target: Vector3
@@ -53,7 +64,19 @@ func _ready() -> void:
 	_body_material = StandardMaterial3D.new()
 	_body_material.albedo_color = Color(0.85, 0.75, 0.55)  # neutral "person" tan
 	_body.material_override = _body_material
+	patience = randf()
+	generosity = randf()
+	thirst = randf()
+	volatility = randf()
 	_build_visuals()
+	_build_click_area()
+	# Needed so clicking a customer (an Area3D) registers.
+	get_viewport().physics_object_picking = true
+
+
+# What the inspect panel reads: the four traits, aligned with Globals.TRAIT_LABELS.
+func personality() -> Array:
+	return [patience, generosity, thirst, volatility]
 
 
 func _process(delta: float) -> void:
@@ -131,7 +154,8 @@ func serve(beer_type: int, quality: float) -> bool:
 		_hide_order_ui()
 		_flash(Color(0.3, 0.85, 0.4))          # happy green
 		_state = State.DRINKING
-		_drink_left = randf_range(drink_time_min, drink_time_max)
+		# Thirsty customers finish faster and order again sooner.
+		_drink_left = randf_range(drink_time_min, drink_time_max) * lerpf(1.5, 0.5, thirst)
 	# A wrong beer: they stay put and keep waiting for the right one.
 	return correct
 
@@ -141,7 +165,11 @@ func serve(beer_type: int, quality: float) -> bool:
 # ------------------------------------------------------------------------------
 func _begin_order() -> void:
 	_order = randi() % Globals.DRINK_COUNT
-	_patience_left = patience_time
+	# Patience runs from a short fuse (low trait) to very patient (high), with an
+	# extra random swing for volatile customers -- unpredictable each order.
+	var mult := lerpf(0.5, 1.5, patience) * lerpf(1.0, randf_range(0.6, 1.4), volatility)
+	_patience_max = patience_time * mult
+	_patience_left = _patience_max
 	_state = State.ORDERING
 	_flash(Color(0.85, 0.75, 0.55))            # back to neutral
 	var mug_mat := _mug_fill.material_override as StandardMaterial3D
@@ -248,7 +276,32 @@ func _bar_material(color: Color) -> StandardMaterial3D:
 
 
 func _update_patience_bar() -> void:
-	var fraction := clampf(_patience_left / patience_time, 0.0, 1.0)
+	var fraction := clampf(_patience_left / _patience_max, 0.0, 1.0)
 	_patience_fill.scale.x = fraction
 	var mat := _patience_fill.material_override as StandardMaterial3D
 	mat.albedo_color = Color(0.25, 0.85, 0.35).lerp(Color(0.9, 0.2, 0.2), 1.0 - fraction)
+
+
+# ------------------------------------------------------------------------------
+# Click-to-inspect: an invisible Area3D the mouse can hit. Clicking asks the UI
+# to show this customer's personality.
+# ------------------------------------------------------------------------------
+func _build_click_area() -> void:
+	var area := Area3D.new()
+	area.input_ray_pickable = true
+	var col := CollisionShape3D.new()
+	var shape := CapsuleShape3D.new()
+	shape.radius = 0.4
+	shape.height = 1.8
+	col.shape = shape
+	col.position = Vector3(0, 0.9, 0)
+	area.add_child(col)
+	add_child(area)
+	area.input_event.connect(_on_click_area)
+
+
+func _on_click_area(_camera: Node, event: InputEvent, _pos: Vector3, _normal: Vector3, _shape: int) -> void:
+	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+		var ui := get_tree().get_first_node_in_group("ui")
+		if ui != null and ui.has_method("show_personality"):
+			ui.show_personality(self)

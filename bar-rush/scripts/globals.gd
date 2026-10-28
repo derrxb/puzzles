@@ -96,3 +96,27 @@ func tender_for(tab: int) -> int:
 		return 0
 	return int(ceil(tab / 10.0)) * 10
 
+
+# --- Personality traits -------------------------------------------------------
+# Every customer has these four, each a 0..1 value picked at random.
+enum Trait { PATIENCE, GENEROSITY, THIRST, VOLATILITY }
+const TRAIT_LABELS := ["Patience", "Generosity", "Thirst", "Volatility"]
+
+# A generous (1.0) customer tips about double; a stingy (0.0) one tips nothing.
+func generosity_factor(generosity: float) -> float:
+	return generosity * 2.0
+
+
+# --- Bartender experience (XP / level) ---------------------------------------
+const XP_PER_LEVEL := 150
+
+func level_for(xp: int) -> int:
+	return 1 + int(xp / XP_PER_LEVEL)
+
+func xp_into_level(xp: int) -> int:
+	return xp % XP_PER_LEVEL
+
+# More experienced bartenders earn bigger tips.
+func level_factor(level: int) -> float:
+	return 1.0 + 0.08 * float(level - 1)
+

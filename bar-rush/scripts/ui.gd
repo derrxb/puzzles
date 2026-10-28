@@ -19,8 +19,24 @@ extends CanvasLayer
 @onready var _held_label: Label = $HeldLabel
 @onready var _held_swatch: ColorRect = $HeldSwatch
 
-const TRAY_CAP := 4
+const MAX_TRAY := 4
 var _tray_swatches: Array[ColorRect] = []
+var _last_tray_types: Array = []
+
+# Meta HUD (tip jar, level/XP, perfect-pour combo).
+var _tipjar_label: Label
+var _level_label: Label
+var _xp_fill: ColorRect
+var _combo_label: Label
+
+# Personality inspect panel.
+var _insp_panel: PanelContainer
+var _insp_title: Label
+var _insp_fills: Array[ColorRect] = []
+
+# Transient "unlocked!" toast.
+var _toast_label: Label
+var _toast_timer: Timer
 
 # Pour meter pieces.
 var _pour_root: Control
@@ -29,14 +45,15 @@ var _pour_foam: ColorRect
 var _pour_label: Label
 const METER_W := 100.0
 const METER_H := 340.0
-const GREEN_FROM := 0.75   # bottom of the "good enough" (auto-add) zone
-const PERFECT := 0.9       # a perfect pour line
+const GREEN_FROM := 0.82   # perfect-pour liquid window (bottom)
+const GREEN_TO := 0.90     # perfect-pour liquid window (top)
 
 # Seating panel pieces.
 var _seat_header: Label
 var _table_grid: GridContainer
 
 # Register panel pieces.
+var _reg_backdrop: ColorRect
 var _reg_panel: PanelContainer
 var _reg_header: Label
 var _reg_info: Label
@@ -55,6 +72,9 @@ func _ready() -> void:
 	_build_seating_panel()
 	_build_tray_display()
 	_build_register_panel()
+	_build_meta_hud()
+	_build_inspect_panel()
+	_build_toast()
 	# Connect after everyone's _ready has run so the groups are populated.
 	_connect_signals.call_deferred()
 
@@ -73,7 +93,10 @@ func _connect_signals() -> void:
 		_game_manager.stats_changed.connect(_on_stats_changed)
 		_game_manager.queue_changed.connect(_refresh_seating)
 		_game_manager.register_state_changed.connect(_on_register_state)
+		_game_manager.meta_changed.connect(_on_meta_changed)
+		_game_manager.unlocked.connect(show_toast)
 		_on_stats_changed(_game_manager.reputation, _game_manager.money)
+		_on_meta_changed(_game_manager.level(), _game_manager.experience, _game_manager.perfect_combo, _game_manager.tip_jar, _game_manager.tray_capacity)
 		_on_register_state({"active": false})
 
 	var player := get_tree().get_first_node_in_group("player")
@@ -102,7 +125,7 @@ func _on_stats_changed(reputation: int, money: int) -> void:
 # are carrying. The single swatch from UI.tscn is replaced by this row.
 func _build_tray_display() -> void:
 	_held_swatch.visible = false
-	for i in TRAY_CAP:
+	for i in MAX_TRAY:
 		var sw := ColorRect.new()
 		sw.anchor_left = 1.0
 		sw.anchor_right = 1.0
@@ -116,12 +139,28 @@ func _build_tray_display() -> void:
 
 
 func _on_tray_changed(types: Array) -> void:
-	_held_label.text = "Tray: %d/%d" % [types.size(), TRAY_CAP]
+	_last_tray_types = types
+	_render_tray()
+
+
+func _render_tray() -> void:
+	var cap := _capacity()
+	_held_label.text = "Tray: %d/%d" % [_last_tray_types.size(), cap]
 	for i in _tray_swatches.size():
-		if i < types.size():
-			_tray_swatches[i].color = Globals.color_for(types[i])
+		if i >= cap:
+			_tray_swatches[i].visible = false            # slot not unlocked yet
+		elif i < _last_tray_types.size():
+			_tray_swatches[i].visible = true
+			_tray_swatches[i].color = Globals.color_for(_last_tray_types[i])
 		else:
+			_tray_swatches[i].visible = true
 			_tray_swatches[i].color = Color(0.2, 0.2, 0.2, 0.5)
+
+
+func _capacity() -> int:
+	if _game_manager != null and "tray_capacity" in _game_manager:
+		return _game_manager.tray_capacity
+	return 2
 
 
 # ------------------------------------------------------------------------------
@@ -146,15 +185,6 @@ func _build_pour_meter() -> void:
 	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_pour_root.add_child(bg)
 
-	# The green "good enough" zone (liquid >= GREEN_FROM): fill into here and it's
-	# auto-added to your tray. It sits at the TOP of the meter.
-	var green := ColorRect.new()
-	green.color = Color(0.3, 0.85, 0.4, 0.3)
-	green.position = Vector2(0, 0)
-	green.size = Vector2(METER_W, METER_H * (1.0 - GREEN_FROM))
-	green.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_pour_root.add_child(green)
-
 	_pour_liquid = ColorRect.new()
 	_pour_liquid.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_pour_root.add_child(_pour_liquid)
@@ -164,13 +194,14 @@ func _build_pour_meter() -> void:
 	_pour_foam.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_pour_root.add_child(_pour_foam)
 
-	# A bright line marking a perfect pour.
-	var perfect_line := ColorRect.new()
-	perfect_line.color = Color(0.4, 1.0, 0.5)
-	perfect_line.position = Vector2(0, METER_H * (1.0 - PERFECT) - 1.0)
-	perfect_line.size = Vector2(METER_W, 3)
-	perfect_line.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_pour_root.add_child(perfect_line)
+	# The green PERFECT window (target liquid level). Drawn on top so you can see
+	# the beer fill into it. Fill to here, let the foam settle, and it's perfect.
+	var green := ColorRect.new()
+	green.color = Color(0.3, 1.0, 0.45, 0.35)
+	green.position = Vector2(0, METER_H * (1.0 - GREEN_TO))
+	green.size = Vector2(METER_W, METER_H * (GREEN_TO - GREEN_FROM))
+	green.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_pour_root.add_child(green)
 
 	_pour_label = Label.new()
 	_pour_label.text = "POUR"
@@ -182,7 +213,7 @@ func _build_pour_meter() -> void:
 	_pour_root.add_child(_pour_label)
 
 
-func _on_pour_state_changed(active: bool, liquid: float, foam: float, ruined: bool, beer_type: int) -> void:
+func _on_pour_state_changed(active: bool, liquid: float, foam: float, ruined: bool, beer_type: int, perfect: bool) -> void:
 	_pour_root.visible = active
 	if not active:
 		return
@@ -194,9 +225,15 @@ func _on_pour_state_changed(active: bool, liquid: float, foam: float, ruined: bo
 	_pour_foam.size = Vector2(METER_W, METER_H * foam)
 	_pour_foam.position = Vector2(0, METER_H - METER_H * (liquid + foam))
 
-	_pour_label.text = "SPILLED!" if ruined else "POUR"
-	_pour_label.add_theme_color_override("font_color",
-		Color(1, 0.4, 0.3) if ruined else Color.WHITE)
+	if ruined:
+		_pour_label.text = "SPILLED!"
+		_pour_label.add_theme_color_override("font_color", Color(1, 0.4, 0.3))
+	elif perfect:
+		_pour_label.text = "PERFECT!"
+		_pour_label.add_theme_color_override("font_color", Color(0.4, 1.0, 0.5))
+	else:
+		_pour_label.text = "POUR"
+		_pour_label.add_theme_color_override("font_color", Color.WHITE)
 
 
 # ------------------------------------------------------------------------------
@@ -241,8 +278,11 @@ func _refresh_seating() -> void:
 	if front == null:
 		_seat_header.text = "Nobody waiting to be seated"
 	else:
-		_seat_header.text = "Seat next: %s of %d   (%d waiting)" % [
-			Globals.party_label(front.kind), front.size, waiting]
+		_seat_header.text = "Seat next: %s of %d   (%d waiting)\nPatience %d%%  ·  Tips %d%%  ·  Volatility %d%%" % [
+			Globals.party_label(front.kind), front.size, waiting,
+			int(front.avg_trait(Globals.Trait.PATIENCE) * 100),
+			int(front.avg_trait(Globals.Trait.GENEROSITY) * 100),
+			int(front.max_trait(Globals.Trait.VOLATILITY) * 100)]
 
 	# Rebuild the table buttons.
 	for child in _table_grid.get_children():
@@ -274,30 +314,40 @@ func _on_table_pressed(table) -> void:
 # Register panel (paying at the cash register)
 # ------------------------------------------------------------------------------
 func _build_register_panel() -> void:
+	# A semi-transparent full-screen backdrop behind the modal. mouse_filter STOP
+	# so clicks outside the buttons don't leak through to the game world.
+	_reg_backdrop = ColorRect.new()
+	_reg_backdrop.color = Color(0, 0, 0, 0.55)
+	_reg_backdrop.anchor_right = 1.0
+	_reg_backdrop.anchor_bottom = 1.0
+	_reg_backdrop.mouse_filter = Control.MOUSE_FILTER_STOP
+	_reg_backdrop.visible = false
+	add_child(_reg_backdrop)
+
 	_reg_panel = PanelContainer.new()
 	_reg_panel.anchor_left = 0.5
 	_reg_panel.anchor_right = 0.5
 	_reg_panel.anchor_top = 0.5
 	_reg_panel.anchor_bottom = 0.5
-	_reg_panel.offset_left = -190.0
-	_reg_panel.offset_right = 190.0
-	_reg_panel.offset_top = -150.0
-	_reg_panel.offset_bottom = 150.0
+	_reg_panel.offset_left = -300.0
+	_reg_panel.offset_right = 300.0
+	_reg_panel.offset_top = -230.0
+	_reg_panel.offset_bottom = 230.0
 	_reg_panel.visible = false
 	add_child(_reg_panel)
 
 	var margin := MarginContainer.new()
 	for side in ["left", "right", "top", "bottom"]:
-		margin.add_theme_constant_override("margin_" + side, 12)
+		margin.add_theme_constant_override("margin_" + side, 24)
 	_reg_panel.add_child(margin)
 
 	var vbox := VBoxContainer.new()
-	vbox.add_theme_constant_override("separation", 8)
+	vbox.add_theme_constant_override("separation", 16)
 	margin.add_child(vbox)
 
-	_reg_header = _centered_label("", 20)
+	_reg_header = _centered_label("", 30)
 	vbox.add_child(_reg_header)
-	_reg_info = _centered_label("", 16)
+	_reg_info = _centered_label("", 22)
 	vbox.add_child(_reg_info)
 
 	# CASH: change-making buttons.
@@ -311,7 +361,8 @@ func _build_register_panel() -> void:
 
 	# CARD: keypad + swipe bar.
 	_reg_card = VBoxContainer.new()
-	_reg_typed = _centered_label("$0", 18)
+	_reg_card.add_theme_constant_override("separation", 10)
+	_reg_typed = _centered_label("$0", 28)
 	_reg_card.add_child(_reg_typed)
 	var pad := GridContainer.new()
 	pad.columns = 3
@@ -322,10 +373,10 @@ func _build_register_panel() -> void:
 	_reg_card.add_child(pad)
 	var swipe_bg := ColorRect.new()
 	swipe_bg.color = Color(0.15, 0.15, 0.18)
-	swipe_bg.custom_minimum_size = Vector2(240, 16)
+	swipe_bg.custom_minimum_size = Vector2(360, 22)
 	_reg_swipe_fill = ColorRect.new()
 	_reg_swipe_fill.color = Color(0.3, 0.9, 0.7)
-	_reg_swipe_fill.size = Vector2(0, 16)
+	_reg_swipe_fill.size = Vector2(0, 22)
 	swipe_bg.add_child(_reg_swipe_fill)
 	_reg_card.add_child(swipe_bg)
 	vbox.add_child(_reg_card)
@@ -338,8 +389,10 @@ func _build_register_panel() -> void:
 func _on_register_state(info: Dictionary) -> void:
 	if not info.get("active", false):
 		_reg_panel.visible = false
+		_reg_backdrop.visible = false
 		return
 	_reg_panel.visible = true
+	_reg_backdrop.visible = true
 
 	var method: int = info["method"]
 	var person := ""
@@ -358,7 +411,7 @@ func _on_register_state(info: Dictionary) -> void:
 		Globals.PayMethod.CARD:
 			_reg_info.text = "%d beer(s) — Bill $%d" % [info["beers"], info["tab"]]
 			_reg_typed.text = "Typed: $%d" % info["typed"]
-			_reg_swipe_fill.size = Vector2(240.0 * info["swipe"], 16)
+			_reg_swipe_fill.size = Vector2(360.0 * info["swipe"], 22)
 		Globals.PayMethod.LINE:
 			_reg_info.text = "%d beer(s) — Bill $%d" % [info["beers"], info["tab"]]
 
@@ -375,10 +428,162 @@ func _make_button(text: String, on_press: Callable) -> Button:
 	var b := Button.new()
 	b.text = text
 	b.focus_mode = Control.FOCUS_NONE       # so clicking doesn't steal the Space key
-	b.custom_minimum_size = Vector2(70, 40)
+	b.custom_minimum_size = Vector2(92, 58)
+	b.add_theme_font_size_override("font_size", 22)
 	b.pressed.connect(on_press)
 	return b
 
 
 func _make_digit(d: int) -> Button:
 	return _make_button(str(d), func(): _game_manager.register_type_digit(d))
+
+
+# ------------------------------------------------------------------------------
+# Meta HUD: tip jar, bartender level + XP, perfect-pour combo
+# ------------------------------------------------------------------------------
+func _build_meta_hud() -> void:
+	_tipjar_label = _hud_label(76.0)
+	_level_label = _hud_label(108.0)
+
+	var xp_bg := ColorRect.new()
+	xp_bg.color = Color(0.12, 0.12, 0.15, 0.9)
+	xp_bg.offset_left = 16.0
+	xp_bg.offset_top = 140.0
+	xp_bg.offset_right = 216.0
+	xp_bg.offset_bottom = 150.0
+	xp_bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(xp_bg)
+
+	_xp_fill = ColorRect.new()
+	_xp_fill.color = Color(0.4, 0.8, 1.0)
+	_xp_fill.offset_left = 16.0
+	_xp_fill.offset_top = 140.0
+	_xp_fill.offset_right = 16.0
+	_xp_fill.offset_bottom = 150.0
+	_xp_fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(_xp_fill)
+
+	_combo_label = _hud_label(158.0)
+	_combo_label.add_theme_font_size_override("font_size", 26)
+	_combo_label.add_theme_color_override("font_color", Color(1.0, 0.85, 0.3))
+	_combo_label.visible = false
+
+
+func _on_meta_changed(level: int, xp: int, combo: int, tipjar: int, _tray_capacity: int) -> void:
+	_tipjar_label.text = "Tip Jar: $%d" % tipjar
+	_level_label.text = "Bartender Lv.%d" % level
+	var frac := float(Globals.xp_into_level(xp)) / float(Globals.XP_PER_LEVEL)
+	_xp_fill.offset_right = 16.0 + 200.0 * clampf(frac, 0.0, 1.0)
+	_combo_label.visible = combo >= 2
+	if combo >= 2:
+		_combo_label.text = "Perfect x%d!" % combo
+	_render_tray()                                   # capacity may have changed
+
+
+func _hud_label(top: float) -> Label:
+	var l := Label.new()
+	l.offset_left = 16.0
+	l.offset_top = top
+	l.offset_right = 360.0
+	l.offset_bottom = top + 30.0
+	l.add_theme_color_override("font_color", Color.WHITE)
+	l.add_theme_color_override("font_outline_color", Color.BLACK)
+	l.add_theme_constant_override("outline_size", 6)
+	l.add_theme_font_size_override("font_size", 22)
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(l)
+	return l
+
+
+# ------------------------------------------------------------------------------
+# Personality inspect panel (click a customer to open)
+# ------------------------------------------------------------------------------
+func _build_inspect_panel() -> void:
+	_insp_panel = PanelContainer.new()
+	_insp_panel.anchor_left = 1.0
+	_insp_panel.anchor_right = 1.0
+	_insp_panel.offset_left = -290.0
+	_insp_panel.offset_right = -16.0
+	_insp_panel.offset_top = 96.0
+	_insp_panel.visible = false
+	add_child(_insp_panel)
+
+	var margin := MarginContainer.new()
+	for side in ["left", "right", "top", "bottom"]:
+		margin.add_theme_constant_override("margin_" + side, 10)
+	_insp_panel.add_child(margin)
+
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 6)
+	margin.add_child(vbox)
+
+	_insp_title = _centered_label("Customer", 18)
+	vbox.add_child(_insp_title)
+	for i in Globals.TRAIT_LABELS.size():
+		vbox.add_child(_trait_row(Globals.TRAIT_LABELS[i]))
+	var close := _make_button("Close", func(): _insp_panel.visible = false)
+	close.custom_minimum_size = Vector2(100, 34)
+	vbox.add_child(close)
+
+
+func _trait_row(trait_name: String) -> Control:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+	var l := Label.new()
+	l.text = trait_name
+	l.custom_minimum_size = Vector2(96, 0)
+	l.add_theme_font_size_override("font_size", 15)
+	row.add_child(l)
+	var bg := ColorRect.new()
+	bg.color = Color(0.15, 0.15, 0.18)
+	bg.custom_minimum_size = Vector2(130, 16)
+	var fill := ColorRect.new()
+	fill.color = Color(0.4, 0.8, 1.0)
+	fill.size = Vector2(0, 16)
+	bg.add_child(fill)
+	row.add_child(bg)
+	_insp_fills.append(fill)
+	return row
+
+
+# ------------------------------------------------------------------------------
+# Unlock toast (shown briefly when the GameManager announces an unlock)
+# ------------------------------------------------------------------------------
+func _build_toast() -> void:
+	_toast_label = Label.new()
+	_toast_label.anchor_left = 0.5
+	_toast_label.anchor_right = 0.5
+	_toast_label.offset_left = -320.0
+	_toast_label.offset_right = 320.0
+	_toast_label.offset_top = 120.0
+	_toast_label.offset_bottom = 164.0
+	_toast_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_toast_label.add_theme_font_size_override("font_size", 30)
+	_toast_label.add_theme_color_override("font_color", Color(1.0, 0.88, 0.4))
+	_toast_label.add_theme_color_override("font_outline_color", Color.BLACK)
+	_toast_label.add_theme_constant_override("outline_size", 8)
+	_toast_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_toast_label.visible = false
+	add_child(_toast_label)
+
+	_toast_timer = Timer.new()
+	_toast_timer.one_shot = true
+	_toast_timer.timeout.connect(func(): _toast_label.visible = false)
+	add_child(_toast_timer)
+
+
+func show_toast(text: String) -> void:
+	_toast_label.text = text
+	_toast_label.visible = true
+	_toast_timer.start(3.0)
+
+
+# Called by a customer when it's clicked.
+func show_personality(customer) -> void:
+	if not is_instance_valid(customer):
+		return
+	var vals: Array = customer.personality()
+	for i in _insp_fills.size():
+		if i < vals.size():
+			_insp_fills[i].size = Vector2(130.0 * clampf(vals[i], 0.0, 1.0), 16)
+	_insp_panel.visible = true

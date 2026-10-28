@@ -26,6 +26,12 @@ extends Node
 @export var tip_rate: float = 0.15            # tip as a fraction of the bill, scaled by speed
 @export var card_swipe_time: float = 1.2      # seconds to hold Space to swipe a card
 
+@export var base_tray_capacity: int = 2       # beers the tray holds (grows later)
+# --- Onboarding gates (grow with bartender level) ---
+@export var base_concurrent_parties: int = 2  # parties allowed in the bar at once
+@export var cap3_level: int = 3               # level that unlocks a 3rd party slot
+@export var cap4_level: int = 6               # level that unlocks a 4th party slot
+@export var groups_unlock_level: int = 3      # level that unlocks big groups (4-5)
 @export var spawn_interval_min: float = 16.0
 @export var spawn_interval_max: float = 26.0
 @export var first_spawn_delay: float = 3.0    # the first party arrives quickly
@@ -38,11 +44,21 @@ extends Node
 # --- Live state ---------------------------------------------------------------
 var reputation: int
 var money: int
+var tip_jar: int              # tips, kept separate from money (for future upgrades)
+var experience: int           # bartender XP, earned from perfect pours
+var perfect_combo: int        # consecutive perfect pours
+var tray_capacity: int        # how many beers the player can carry at once
+
+const MAX_TRAY_CAPACITY := 4
+const MAX_CONCURRENT := 4
+
 var _queue: Array = []        # parties QUEUING at the door
 var _pay_queue: Array = []    # parties waiting at the register
 var _session: Dictionary = {} # the payment being rung up right now (empty = none)
 
 signal stats_changed(reputation: int, money: int)
+signal meta_changed(level: int, xp: int, combo: int, tip_jar: int, tray_capacity: int)
+signal unlocked(message: String)               # onboarding: a new thing just unlocked
 signal queue_changed()                         # seating panel refresh
 signal register_state_changed(info: Dictionary)
 
@@ -66,6 +82,10 @@ func _ready() -> void:
 
 	reputation = starting_reputation
 	money = starting_money
+	tip_jar = 0
+	experience = 0
+	perfect_combo = 0
+	tray_capacity = base_tray_capacity
 
 	_spawn_timer = Timer.new()
 	_spawn_timer.one_shot = true
@@ -74,15 +94,43 @@ func _ready() -> void:
 	_spawn_timer.start(first_spawn_delay)      # first party shows up soon
 
 	stats_changed.emit.call_deferred(reputation, money)
+	_emit_meta.call_deferred()
 
 
 # ------------------------------------------------------------------------------
 # Spawning
 # ------------------------------------------------------------------------------
 func _on_spawn_timer_timeout() -> void:
-	if _queue.size() < max_queue:              # don't pile up a crowd at the door
+	# Two limits: the door queue (don't pile up a crowd) and the overall number of
+	# parties in the bar (an onboarding cap that grows with level).
+	if _active_party_count() < active_party_cap() and _queue.size() < max_queue:
 		_spawn_party()
 	_spawn_timer.start(randf_range(spawn_interval_min, spawn_interval_max))
+
+
+# How many parties the player can juggle at once (rises with bartender level).
+func active_party_cap() -> int:
+	return _cap_for_level(level())
+
+
+func _cap_for_level(lv: int) -> int:
+	if lv >= cap4_level:
+		return mini(4, MAX_CONCURRENT)
+	if lv >= cap3_level:
+		return 3
+	return base_concurrent_parties
+
+
+func _active_party_count() -> int:
+	var n := 0
+	for party in get_tree().get_nodes_in_group("parties"):
+		if is_instance_valid(party) and party.is_active():
+			n += 1
+	return n
+
+
+func groups_unlocked() -> bool:
+	return level() >= groups_unlock_level
 
 
 func _spawn_party() -> void:
@@ -101,6 +149,9 @@ func _spawn_party() -> void:
 
 
 func _random_party_kind() -> int:
+	# Early on, only singles and duos arrive; big groups unlock with level.
+	if not groups_unlocked():
+		return Globals.PartyKind.SINGLE if randf() < 0.5 else Globals.PartyKind.DUO
 	var r := randf()
 	if r < 0.45:
 		return Globals.PartyKind.SINGLE
@@ -163,6 +214,54 @@ func _on_left_unseated(party) -> void:
 
 func waste_drink() -> void:
 	_add_money(-dump_cost)
+
+
+# ------------------------------------------------------------------------------
+# Bartender experience + perfect-pour combo (called by the player)
+# ------------------------------------------------------------------------------
+func level() -> int:
+	return Globals.level_for(experience)
+
+
+func add_perfect() -> void:
+	var before := level()
+	perfect_combo += 1
+	# Each perfect pour grants XP, more the longer your combo runs.
+	experience += 10 + 5 * (perfect_combo - 1)
+	var after := level()
+	if after > before:
+		_check_unlocks(before, after)
+	_emit_meta()
+
+
+# Announce onboarding unlocks when the player levels up past a threshold.
+func _check_unlocks(old_level: int, new_level: int) -> void:
+	if old_level < groups_unlock_level and new_level >= groups_unlock_level:
+		unlocked.emit("Big groups now visit your bar!")
+	if _cap_for_level(old_level) < _cap_for_level(new_level):
+		unlocked.emit("You can handle more customers now!")
+
+
+func reset_combo() -> void:
+	if perfect_combo != 0:
+		perfect_combo = 0
+		_emit_meta()
+
+
+func _add_tip(amount: int) -> void:
+	tip_jar = maxi(tip_jar + amount, 0)
+	_emit_meta()
+
+
+# Groundwork hook: raise the tray capacity by one (up to the max). Call this
+# later on a level-up or a Tip-Jar purchase; the player + HUD pick it up live.
+func unlock_tray_slot() -> void:
+	tray_capacity = mini(tray_capacity + 1, MAX_TRAY_CAPACITY)
+	_emit_meta()
+
+
+func _emit_meta() -> void:
+	meta_changed.emit(level(), experience, perfect_combo, tip_jar, tray_capacity)
 
 
 # ------------------------------------------------------------------------------
@@ -343,11 +442,14 @@ func _finish_party() -> void:
 	# the payment wasn't handled cleanly.
 	if is_instance_valid(party):
 		var base: int = party.total_tab()
-		var tip := int(round(base * tip_rate * party.pay_fraction()))
+		# Tip scales with the bill, how generous the party is, how promptly you
+		# rang them up, and your bartender level. Tips go to the TIP JAR, not money.
+		var tip := int(round(base * tip_rate * Globals.generosity_factor(party.avg_generosity()) \
+			* party.pay_fraction() * Globals.level_factor(level())))
 		if not _session["clean"]:
 			tip = tip / 2
 		if tip > 0:
-			_add_money(tip)
+			_add_tip(tip)
 		party.finish_paid()
 		_pay_queue.erase(party)
 	_end_session()
