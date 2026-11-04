@@ -17,6 +17,13 @@ extends StaticBody3D
 # A human label for the seating panel, e.g. "Bar 1" or "Table 2". Set by main.gd.
 var label: String = "Table"
 
+# When false (default), the placeholder furniture MESHES (the crude cylinders:
+# Top, StoolA/B, Seat, Stool0..4) are hidden -- the imported "Old bar" model
+# provides the visible tables/stools instead. The invisible "Seat" markers and
+# the collision shape always stay active. Flip on in the editor to see the old
+# placeholder furniture again (handy when tuning seat positions).
+@export var show_mesh := false
+
 # _occupied[i] == true means seat i currently has a customer.
 var _seat_markers: Array[Node3D] = []
 var _occupied: Array[bool] = []
@@ -35,6 +42,10 @@ func _ready() -> void:
 		if child is Node3D and _is_seat_marker(child.name):
 			_seat_markers.append(child)
 			_occupied.append(false)
+		# Hide the placeholder meshes unless explicitly asked to show them; the
+		# model's own furniture is the visible table/stool now.
+		if child is MeshInstance3D:
+			child.visible = show_mesh
 
 
 # --- Queries ------------------------------------------------------------------

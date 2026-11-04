@@ -46,18 +46,21 @@ func _place_furniture() -> void:
 	# are kept inside that or customers would sit outside the walls. See the
 	# BarEnvironment transform in Main.tscn.
 
-	# Bar stools for SINGLES: along the front of the counter (counter is at z=5).
-	var bar_x := [-3.5, -2.5, 2.5, 3.5]
-	for i in bar_x.size():
-		_place(STOOL, Vector3(bar_x[i], 0, 4.0), Globals.SeatKind.BAR, "Bar %d" % (i + 1))
+	# Bar stools for SINGLES: placed dead-centre on the model's green plaid-topped
+	# stools (three along the front of the green room at z~3.8, one on the right).
+	var bar_pos := [Vector3(0.9, 0, 3.9), Vector3(2.7, 0, 3.9), Vector3(4.5, 0, 3.9), Vector3(7.0, 0, 0.3)]
+	for i in bar_pos.size():
+		_place(STOOL, bar_pos[i], Globals.SeatKind.BAR, "Bar %d" % (i + 1))
 
-	# Small tables for DUOS: tucked around the open floor.
-	var smalls := [Vector3(-3.5, 0, 3.3), Vector3(4.5, 0, 3.0), Vector3(0.5, 0, 0.5)]
+	# Small tables for DUOS: centred on the model's round wooden pub tables so the
+	# two seats (Seat0/Seat1 at x=+/-1.1) flank each table evenly.
+	var smalls := [Vector3(1.3, 0, -0.6), Vector3(4.1, 0, 0.3), Vector3(7.9, 0, -0.6)]
 	for i in smalls.size():
 		_place(SMALL_TABLE, smalls[i], Globals.SeatKind.SMALL, "Table %d" % (i + 1))
 
-	# Big tables for GROUPS: in the green games room where there's room for 5 seats.
-	var larges := [Vector3(3, 0, 1.2), Vector3(6.5, 0, 1.2)]
+	# Big tables for GROUPS: the model has no large tables, so these 5-seat rings
+	# sit in the two most open patches of the green games-room carpet.
+	var larges := [Vector3(6.3, 0, 1.7), Vector3(2.3, 0, 1.8)]
 	for i in larges.size():
 		_place(LARGE_TABLE, larges[i], Globals.SeatKind.LARGE, "Big Table %d" % (i + 1))
 

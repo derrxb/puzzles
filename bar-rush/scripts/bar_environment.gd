@@ -9,11 +9,16 @@
 #   FrontSide_10 - overhead beam
 #   FrontSide_16 - overhead beam
 #   FrontSide_28 - the overhead frame (diagonal rafters + perimeter top rails)
+#   FrontSide_6/17/33/46/59/66 - overhead beam/rafter layers + perimeter railings
+#     that cross the view at low angles (all elevated: AABB bottom > 1.6, so none
+#     are floor-standing walls).
 # Add more names here if other overhead pieces ever intrude.
 extends Node3D
 
 const HIDDEN_MESHES: Array[String] = [
 	"FrontSide_4", "FrontSide_10", "FrontSide_16", "FrontSide_28",
+	"FrontSide_6", "FrontSide_17", "FrontSide_33", "FrontSide_46",
+	"FrontSide_59", "FrontSide_66",
 ]
 
 

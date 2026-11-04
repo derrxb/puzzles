@@ -20,9 +20,10 @@ extends CharacterBody3D
 @export var serve_range: float = 2.0
 
 # --- Pour model (modeled on a real keg; see research notes) -------------------
-# A full pour takes ~6s. Foam grows from AGITATION, which is worse when the glass
+# A full pour takes ~4s. Foam grows from AGITATION, which is worse when the glass
 # is upright/full (auto-tilt). Foam always settles, turning partly back to liquid.
-@export var fill_rate: float = 0.15     # liquid per second at full flow
+# (fill_rate is the single knob for pour speed -- raise it for faster pours.)
+@export var fill_rate: float = 0.25     # liquid per second at full flow
 @export var foam_conv: float = 1.1      # foam made per unit beer at max agitation
 @export var agit_min: float = 0.10      # agitation when tilted/gentle (low fill)
 @export var agit_max: float = 1.0       # agitation when upright/full
