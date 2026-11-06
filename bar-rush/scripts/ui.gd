@@ -61,7 +61,7 @@ var _reg_backdrop: ColorRect
 var _reg_panel: PanelContainer
 var _reg_header: Label
 var _reg_info: Label
-var _reg_cash: HBoxContainer
+var _reg_cash: Container
 var _reg_card: VBoxContainer
 var _reg_line: Label
 var _reg_typed: Label
@@ -69,12 +69,18 @@ var _reg_swipe_fill: ColorRect
 
 var _game_manager: Node
 
+# On-screen touch controls (phones / web). Hidden on desktop.
+const TOUCH_JOYSTICK := preload("res://scripts/touch_joystick.gd")
+const TOUCH_BUTTON := preload("res://scripts/touch_action_button.gd")
+var _touch_root: Control
+
 
 func _ready() -> void:
 	add_to_group("ui")
 	_build_pour_meter()
 	_build_seating_panel()
 	_build_tray_display()
+	_build_touch_controls()      # before the register modal so the modal stays on top
 	_build_register_panel()
 	_build_meta_hud()
 	_build_inspect_panel()
@@ -90,6 +96,54 @@ func _ready() -> void:
 	t.autostart = true
 	t.timeout.connect(_refresh_seating)
 	add_child(t)
+
+
+# Build the on-screen touch controls: a movement joystick (bottom-left), POUR + DUMP
+# buttons (bottom-right), and nothing over the rest so background drags orbit the camera.
+# Only shown on touch devices / web (keyboard+mouse on desktop is untouched).
+func _build_touch_controls() -> void:
+	_touch_root = Control.new()
+	_touch_root.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_touch_root.mouse_filter = Control.MOUSE_FILTER_IGNORE   # empty space -> camera drag
+	add_child(_touch_root)
+
+	var stick := Control.new()
+	stick.set_script(TOUCH_JOYSTICK)
+	stick.anchor_left = 0.0
+	stick.anchor_right = 0.45
+	stick.anchor_top = 0.45
+	stick.anchor_bottom = 1.0
+	_touch_root.add_child(stick)
+
+	var pour := Control.new()
+	pour.set_script(TOUCH_BUTTON)
+	pour.set("action", &"pour")
+	pour.set("label_text", "POUR")
+	pour.set("button_color", Color(0.90, 0.55, 0.20, 0.55))
+	_anchor_br(pour, -180, -180, -30, -30)
+	_touch_root.add_child(pour)
+
+	var dump := Control.new()
+	dump.set_script(TOUCH_BUTTON)
+	dump.set("action", &"dump")
+	dump.set("label_text", "DUMP")
+	dump.set("button_color", Color(0.65, 0.22, 0.20, 0.5))
+	_anchor_br(dump, -205, -300, -115, -210)
+	_touch_root.add_child(dump)
+
+	_touch_root.visible = DisplayServer.is_touchscreen_available() or OS.has_feature("web")
+
+
+# Anchor a control to the bottom-right corner with the given offsets (px from corner).
+func _anchor_br(c: Control, l: float, t: float, r: float, b: float) -> void:
+	c.anchor_left = 1.0
+	c.anchor_right = 1.0
+	c.anchor_top = 1.0
+	c.anchor_bottom = 1.0
+	c.offset_left = l
+	c.offset_top = t
+	c.offset_right = r
+	c.offset_bottom = b
 
 
 func _connect_signals() -> void:
@@ -408,18 +462,37 @@ func _build_register_panel() -> void:
 	_reg_info = _centered_label("", 22)
 	vbox.add_child(_reg_info)
 
-	# CASH: hand over change with the number keys (no clicking -- cursor is captured).
-	_reg_cash = HBoxContainer.new()
-	_reg_cash.alignment = BoxContainer.ALIGNMENT_CENTER
-	_reg_cash.add_child(_centered_label("Press  1 / 5 / 0  →  +$1 / +$5 / +$10     ·     Backspace resets     ·     Space gives", 18))
+	# CASH: tap the amount buttons to make change (or use 1/5/0 keys on desktop), then
+	# tap/press POUR to give.
+	_reg_cash = VBoxContainer.new()
+	_reg_cash.add_theme_constant_override("separation", 8)
+	_reg_cash.add_child(_centered_label("Make the change, then tap POUR to give  (keys: 1 / 5 / 0)", 16))
+	var cash_row := HBoxContainer.new()
+	cash_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	cash_row.add_theme_constant_override("separation", 8)
+	cash_row.add_child(_make_button("+$1", func(): _game_manager.register_change_add(1)))
+	cash_row.add_child(_make_button("+$5", func(): _game_manager.register_change_add(5)))
+	cash_row.add_child(_make_button("+$10", func(): _game_manager.register_change_add(10)))
+	cash_row.add_child(_make_button("Reset", func(): _game_manager.register_change_reset()))
+	_reg_cash.add_child(cash_row)
 	vbox.add_child(_reg_cash)
 
-	# CARD: type the total on the number keys, then hold Space to swipe.
+	# CARD: tap the digit pad to enter the total, then HOLD POUR to swipe.
 	_reg_card = VBoxContainer.new()
-	_reg_card.add_theme_constant_override("separation", 10)
+	_reg_card.add_theme_constant_override("separation", 8)
 	_reg_typed = _centered_label("Typed: $0", 28)
 	_reg_card.add_child(_reg_typed)
-	_reg_card.add_child(_centered_label("Type the total on the number keys  ·  Backspace clears  ·  hold Space to swipe", 16))
+	_reg_card.add_child(_centered_label("Enter the total, then HOLD POUR to swipe", 16))
+	var pad := GridContainer.new()
+	pad.columns = 5
+	for d in range(1, 10):
+		pad.add_child(_make_digit(d))
+	pad.add_child(_make_digit(0))
+	pad.add_child(_make_button("<", func(): _game_manager.register_type_clear()))
+	var pad_center := HBoxContainer.new()
+	pad_center.alignment = BoxContainer.ALIGNMENT_CENTER
+	pad_center.add_child(pad)
+	_reg_card.add_child(pad_center)
 	var swipe_bg := ColorRect.new()
 	swipe_bg.color = Color(0.15, 0.15, 0.18)
 	swipe_bg.custom_minimum_size = Vector2(360, 22)
@@ -431,7 +504,7 @@ func _build_register_panel() -> void:
 	vbox.add_child(_reg_card)
 
 	# LINE Pay: just a prompt.
-	_reg_line = _centered_label("Press Space to scan their QR code", 16)
+	_reg_line = _centered_label("Tap POUR to scan their QR code", 16)
 	vbox.add_child(_reg_line)
 
 

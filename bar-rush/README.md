@@ -210,3 +210,4 @@ A note on today's simplifications you may want to revisit: customers only ever
 deliver a *matching* beer from the tray (so you can't hand over the wrong one by
 accident), and members walk to seats in a straight line (no pathfinding around
 furniture yet).
+# puzzles

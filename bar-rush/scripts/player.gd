@@ -34,6 +34,8 @@ const PITCH_LIMIT := 1.4                          # ~80 deg up/down
 
 var _third_person := false     # start in first person
 var _pitch := 0.0              # current head pitch (radians)
+var _cam_touches := {}         # active background touches (index -> pos) for touch camera
+var _prev_pinch := 0.0         # last two-finger distance (pinch zoom)
 # Cached each frame for the register key handler.
 var _gm: Node
 var _at_register := false
@@ -175,6 +177,28 @@ func _unhandled_input(event: InputEvent) -> void:
 		rotate_y(-event.relative.x * mouse_sensitivity)
 		_pitch = clampf(_pitch - event.relative.y * mouse_sensitivity, -1.3, 0.4)
 		_head.rotation.x = _pitch
+	# --- TOUCH (phone): one-finger drag orbits, two-finger pinch zooms. Only touches on
+	# empty background reach here -- the joystick/buttons/seat Controls consume theirs. ---
+	elif event is InputEventScreenTouch:
+		if event.pressed:
+			_cam_touches[event.index] = event.position
+		else:
+			_cam_touches.erase(event.index)
+		if _cam_touches.size() < 2:
+			_prev_pinch = 0.0
+	elif event is InputEventScreenDrag:
+		_cam_touches[event.index] = event.position
+		if _cam_touches.size() == 1:
+			rotate_y(-event.relative.x * mouse_sensitivity)
+			_pitch = clampf(_pitch - event.relative.y * mouse_sensitivity, -1.3, 0.4)
+			_head.rotation.x = _pitch
+		elif _cam_touches.size() == 2:
+			var ks := _cam_touches.keys()
+			var cur: float = _cam_touches[ks[0]].distance_to(_cam_touches[ks[1]])
+			if _prev_pinch > 0.0:
+				third_person_distance = clampf(third_person_distance - (cur - _prev_pinch) * 0.012, 1.2, 6.0)
+				_spring.spring_length = third_person_distance
+			_prev_pinch = cur
 
 
 # Third person: camera on a spring arm behind the bartender (auto-avoids walls).
