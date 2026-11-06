@@ -67,6 +67,35 @@ const GRADE_QUALITY := [0.5, 0.8, 1.0]  # POOR/GOOD/PERFECT -> quality for prici
 
 const GLASS_H := 0.34
 const GLASS_BOTTOM := -0.17
+# Beer mug glass model (imported from Beer_Mug_Glass.usdz -> OBJ). MUG_MODEL_H is its
+# natural height in model units (base at y=0); GLASS_INNER_R is the beer/foam column
+# radius that sits just inside the mug's wall once it's scaled down to GLASS_H.
+const MUG_MESH := preload("res://assets/beer_mug/beer_mug.obj")
+const MUG_MODEL_H := 15.7113
+const GLASS_INNER_R := 0.075
+# While pouring, the active glass sits on the counter UNDER the tap (so you watch it
+# fill where you're looking), then goes to the hand-tray once stocked. The counter top
+# is at world y=1.1, so the glass root sits at 1.1 - GLASS_BOTTOM.
+const GLASS_SIT_Y := 1.27
+
+# The bartender character (Mixamo-rigged FBX). It's shown only in third person as the
+# player's body. Mesh names survived, so the face gets its real texture; the body uses a
+# flat colour because that download's body texture is corrupted.
+const BARTENDER := preload("res://assets/bartender_rigged/bartender.fbx")
+const BARTENDER_HEAD_TEX := preload("res://assets/bartender/textures/275e4ba0ff024a3ebfbf5e712c45975d_Headbust_Diff.png")
+# Carry clips: he always holds a tray, so idle = "Carrying tray" (standing with tray),
+# move = "Running with tray". (Plain idle/walk .fbx are still in anims/ if we want them.)
+const BARTENDER_IDLE := preload("res://assets/bartender_rigged/anims/carry_walk.fbx")
+const BARTENDER_WALK := preload("res://assets/bartender_rigged/anims/carry_run.fbx")
+@export var character_scale := 0.28           # a touch smaller -- felt big for the bar
+# Feet-on-floor offset: the model's lowest point sits at -2.49*scale, and the visible
+# bar floor is at y~0.04, so lift by that much (0.04 + 2.49*scale).
+@export var character_foot_offset := 0.74
+@export var character_body_color := Color(0.62, 0.55, 0.45)
+@export var hold_point := Vector3(0, 1.5, -0.22)   # tray position = character's hands
+var _char: Node3D
+var _char_anim: AnimationPlayer
+var _cur_anim := ""
 
 # The tray's contents: each entry is {"type": int, "quality": float}.
 signal tray_changed(types: Array)
@@ -91,6 +120,12 @@ var _active_root: Node3D
 var _active_liquid: MeshInstance3D
 var _active_liquid_mat: StandardMaterial3D
 var _active_foam: MeshInstance3D
+var _pour_stream: MeshInstance3D            # beer falling into the glass while pouring
+var _pour_stream_mat: StandardMaterial3D
+var _pouring_now := false                   # are we actively pouring THIS frame?
+var _active_tap_world := Vector3(0, 1.95, 4.7)  # world pos of the tap we're pouring from
+var _hold_base_y := 0.0                     # resting height of the Hold point (for bob)
+var _bob_time := 0.0
 
 var _last_hint: String = ""
 
@@ -98,6 +133,7 @@ var _last_hint: String = ""
 func _ready() -> void:
 	add_to_group("player")
 	_build_carry_visuals()
+	_build_character()
 	tray_changed.emit(_tray_types())
 
 	# Mouse-look: hide + lock the cursor to the window centre so moving the mouse
@@ -135,7 +171,102 @@ func _unhandled_input(event: InputEvent) -> void:
 func _set_view(third: bool) -> void:
 	_third_person = third
 	_spring.spring_length = third_person_distance if third else 0.0
-	_body.visible = third
+	# Show the bartender model in third person (fall back to the capsule if it's
+	# missing). Never show your own body in first person.
+	if _char != null:
+		_char.visible = third
+		_body.visible = false
+	else:
+		_body.visible = third
+
+
+# Build the rigged bartender as the third-person body: scaled to ~1.8m, feet on the
+# floor, facing the player's forward (-Z). Face uses its texture; body is flat-colored
+# (its source texture is corrupted). Static for now -- animations slot in once added.
+func _build_character() -> void:
+	_char = BARTENDER.instantiate()
+	add_child(_char)
+	_char.scale = Vector3.ONE * character_scale
+	_char.rotation.y = PI
+	_char.position = Vector3(0, character_foot_offset, 0)
+	for mi in _collect_meshes(_char):
+		var mat := StandardMaterial3D.new()
+		if "Headbust" in mi.name:
+			mat.albedo_texture = BARTENDER_HEAD_TEX
+			mat.roughness = 0.6
+		else:
+			mat.albedo_color = character_body_color
+			mat.roughness = 0.85
+		mi.material_override = mat
+	_char.visible = false
+
+	# Load the idle + walk clips onto the character's own AnimationPlayer. The walk
+	# is NOT "In Place" (hips drift forward ~5 units), so we freeze its hip X/Z -- the
+	# game moves the body; the animation should only move the legs.
+	_char_anim = _char.find_child("AnimationPlayer", true, false) as AnimationPlayer
+	if _char_anim != null:
+		_add_clip(BARTENDER_IDLE, "idle", false)
+		_add_clip(BARTENDER_WALK, "walk", true)
+		_char_anim.play("idle")
+		_cur_anim = "idle"
+
+
+# Pull the single clip out of a Mixamo FBX and add it to the character's AnimationPlayer
+# under `anim_name`, looping. If `in_place`, freeze the Hips horizontal translation.
+func _add_clip(scene: PackedScene, anim_name: String, in_place: bool) -> void:
+	var tmp: Node = scene.instantiate()
+	var ap := tmp.find_child("AnimationPlayer", true, false) as AnimationPlayer
+	if ap != null and ap.get_animation_list().size() > 0:
+		var src := ap.get_animation(ap.get_animation_list()[0])
+		var anim: Animation = src.duplicate(true)
+		anim.loop_mode = Animation.LOOP_LINEAR
+		if in_place:
+			_freeze_hips_xz(anim)
+		var lib := _char_anim.get_animation_library("")
+		if lib == null:
+			lib = AnimationLibrary.new()
+			_char_anim.add_animation_library("", lib)
+		if lib.has_animation(anim_name):
+			lib.remove_animation(anim_name)
+		lib.add_animation(anim_name, anim)
+	tmp.queue_free()
+
+
+# Freeze the Hips bone's X/Z translation (keep the vertical bounce) so a forward-moving
+# walk clip animates in place.
+func _freeze_hips_xz(anim: Animation) -> void:
+	for t in anim.get_track_count():
+		if anim.track_get_type(t) != Animation.TYPE_POSITION_3D:
+			continue
+		if "Hips" not in str(anim.track_get_path(t)):
+			continue
+		var n := anim.track_get_key_count(t)
+		if n == 0:
+			continue
+		var first: Vector3 = anim.track_get_key_value(t, 0)
+		for k in n:
+			var v: Vector3 = anim.track_get_key_value(t, k)
+			anim.track_set_key_value(t, k, Vector3(first.x, v.y, first.z))
+
+
+# Play "walk" while moving, "idle" when still (crossfaded). Runs even in first person
+# so the body is in the right state the moment you press V.
+func _update_character_anim() -> void:
+	if _char_anim == null:
+		return
+	var want := "walk" if Vector2(velocity.x, velocity.z).length() > 0.3 else "idle"
+	if want != _cur_anim:
+		_cur_anim = want
+		_char_anim.play(want, 0.2)
+
+
+func _collect_meshes(n: Node) -> Array:
+	var r := []
+	if n is MeshInstance3D and n.mesh:
+		r.append(n)
+	for c in n.get_children():
+		r += _collect_meshes(c)
+	return r
 
 
 func _physics_process(delta: float) -> void:
@@ -188,6 +319,11 @@ func _process(delta: float) -> void:
 	if Input.is_action_just_pressed("dump"):
 		_dump_one()
 
+	_pouring_now = pouring
+	if not tap.is_empty():
+		_active_tap_world = tap["position"]   # remember which faucet to pour under
+	_update_hold_bob(delta)
+	_update_character_anim()
 	_update_active_visual()
 	pour_state_changed.emit(_beer_type != -1, _liquid, _foam, _ruined, _beer_type, _is_perfect())
 	_update_hint(tap, near_tap, at_register, gm)
@@ -499,6 +635,10 @@ func _capacity() -> int:
 # Carry visuals: a tray of glasses + the active glass being poured
 # ------------------------------------------------------------------------------
 func _build_carry_visuals() -> void:
+	# Put the carry tray where the bartender's hands are in the carry pose (measured),
+	# so in third person the beers sit in his hands.
+	$Hold.position = hold_point
+
 	# A flat tray board.
 	var tray := MeshInstance3D.new()
 	var board := BoxMesh.new()
@@ -507,17 +647,16 @@ func _build_carry_visuals() -> void:
 	tray.material_override = _solid(Color(0.25, 0.2, 0.15))
 	$Hold.add_child(tray)
 
-	# One small glass per tray slot (hidden until that slot is filled). We always
-	# build the max; only as many as the current capacity are ever used.
+	# One beer per tray slot, using the real MUG model (filled beer color), hidden until
+	# that slot is stocked. We always build the max; capacity limits how many are used.
+	var mug_scale := GLASS_H / MUG_MODEL_H * 0.62      # a bit smaller than the pour mug
 	for i in MAX_TRAY:
 		var glass := MeshInstance3D.new()
-		var cyl := CylinderMesh.new()
-		cyl.top_radius = 0.07
-		cyl.bottom_radius = 0.06
-		cyl.height = 0.2
-		glass.mesh = cyl
+		glass.mesh = MUG_MESH
+		glass.scale = Vector3.ONE * mug_scale
+		glass.rotation_degrees = Vector3(0, 150, 0)
 		var slot_x := (float(i) - float(MAX_TRAY - 1) / 2.0) * 0.17
-		glass.position = Vector3(slot_x, 0.12, 0)
+		glass.position = Vector3(slot_x, 0.03, 0)
 		var mat := _solid(Color.WHITE)
 		glass.material_override = mat
 		glass.visible = false
@@ -525,33 +664,53 @@ func _build_carry_visuals() -> void:
 		_tray_glasses.append(glass)
 		_tray_materials.append(mat)
 
-	# The active glass we're pouring, held a bit forward of the tray.
+	# The active glass we're pouring. It's top_level so we can park it in WORLD space
+	# under the tap you're pouring from (you watch it fill where you're looking),
+	# rather than down at your hip.
 	_active_root = Node3D.new()
-	_active_root.position = Vector3(0, 0.0, 0.32)
+	_active_root.top_level = true
 	$Hold.add_child(_active_root)
 
+	# The mug is the imported glass model (Beer_Mug_Glass.usdz -> OBJ), shown as clear
+	# glass. Its model is MUG_MODEL_H tall with its base at y=0, so we scale it to
+	# GLASS_H and sit its base at GLASS_BOTTOM; the liquid/foam cylinders below fill it.
 	var mug := MeshInstance3D.new()
-	var mug_mesh := CylinderMesh.new()
-	mug_mesh.top_radius = 0.12
-	mug_mesh.bottom_radius = 0.1
-	mug_mesh.height = GLASS_H
-	mug.mesh = mug_mesh
-	mug.position = Vector3(0, GLASS_BOTTOM + GLASS_H / 2.0, 0)
-	var mug_mat := _solid(Color(0.85, 0.9, 1.0, 0.25))
+	mug.mesh = MUG_MESH
+	var s := GLASS_H / MUG_MODEL_H
+	mug.scale = Vector3(s, s, s)
+	mug.position = Vector3(0, GLASS_BOTTOM, 0)
+	mug.rotation_degrees = Vector3(0, 150, 0)      # turn the handle to a natural angle
+	var mug_mat := _solid(Color(0.82, 0.88, 0.95, 0.16))
 	mug_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mug_mat.roughness = 0.05
+	mug_mat.metallic = 0.0
+	mug_mat.cull_mode = BaseMaterial3D.CULL_DISABLED   # thin glass: show both faces
 	mug.material_override = mug_mat
 	_active_root.add_child(mug)
 
+	# Beer + foam sit INSIDE the glass (radius kept just under the mug's inner wall).
 	_active_liquid = MeshInstance3D.new()
-	_active_liquid.mesh = _unit_cylinder(0.09)
+	_active_liquid.mesh = _unit_cylinder(GLASS_INNER_R)
 	_active_liquid_mat = _solid(Color.WHITE)
 	_active_liquid.material_override = _active_liquid_mat
 	_active_root.add_child(_active_liquid)
 
 	_active_foam = MeshInstance3D.new()
-	_active_foam.mesh = _unit_cylinder(0.09)
+	_active_foam.mesh = _unit_cylinder(GLASS_INNER_R)
 	_active_foam.material_override = _solid(Globals.FOAM_COLOR)
 	_active_root.add_child(_active_foam)
+
+	# A thin "stream" of beer that appears above the glass while actively pouring,
+	# reaching down from the rim to the current beer surface. Sells the pour.
+	_pour_stream = MeshInstance3D.new()
+	_pour_stream.mesh = _unit_cylinder(0.008)
+	_pour_stream_mat = _solid(Color.WHITE)
+	_pour_stream_mat.emission_enabled = true
+	_pour_stream.material_override = _pour_stream_mat
+	_pour_stream.visible = false
+	_active_root.add_child(_pour_stream)
+
+	_hold_base_y = $Hold.position.y
 
 
 func _update_active_visual() -> void:
@@ -563,10 +722,12 @@ func _update_active_visual() -> void:
 		else:
 			_tray_glasses[i].visible = false
 
-	# Active glass fills up as we pour.
+	# Active glass fills up as we pour -- parked on the counter under the tap.
 	_active_root.visible = _beer_type != -1
 	if _beer_type == -1:
 		return
+	_active_root.global_position = Vector3(_active_tap_world.x, GLASS_SIT_Y, _active_tap_world.z)
+	_active_root.global_rotation = Vector3.ZERO
 	var liquid_h := GLASS_H * _liquid
 	var foam_h := GLASS_H * _foam
 	_active_liquid.visible = liquid_h > 0.001
@@ -576,6 +737,27 @@ func _update_active_visual() -> void:
 	_active_foam.visible = foam_h > 0.001
 	_active_foam.scale.y = maxf(foam_h, 0.001)
 	_active_foam.position.y = GLASS_BOTTOM + liquid_h + foam_h / 2.0
+
+	# Pour stream: a thin beer column from the FAUCET spout down to the beer surface,
+	# visible only while actively holding the pour.
+	var surface := GLASS_BOTTOM + liquid_h + foam_h
+	var spout_local := (_active_tap_world.y - GLASS_SIT_Y) - 0.05   # faucet tip in root space
+	var stream_h := maxf(spout_local - surface, 0.001)
+	_pour_stream.visible = _pouring_now and not _ruined
+	_pour_stream.scale.y = stream_h
+	_pour_stream.position.y = surface + stream_h / 2.0
+	_pour_stream_mat.albedo_color = Globals.color_for(_beer_type)
+	_pour_stream_mat.emission = Globals.color_for(_beer_type)
+	_pour_stream_mat.emission_energy_multiplier = 0.4
+
+
+# A gentle idle bob on the carried tray/glass so it reads as "held", with a little
+# extra bounce while walking.
+func _update_hold_bob(delta: float) -> void:
+	var moving := Vector2(velocity.x, velocity.z).length() > 0.2
+	_bob_time += delta * (9.0 if moving else 2.0)
+	var amp := 0.012 if moving else 0.004
+	$Hold.position.y = _hold_base_y + sin(_bob_time) * amp
 
 
 func _solid(color: Color) -> StandardMaterial3D:

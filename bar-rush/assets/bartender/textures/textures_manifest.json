@@ -1,0 +1,19 @@
+{
+  "uid": "cad3f6c3b9b84c14a0e3b711b99f3f3a",
+  "count": 13,
+  "files": [
+    "ca38d368b05b4a269ce1bdebcaab996f_DarrenContreras_Character_LOD0_lambert1_Metallic.png",
+    "0e3888571b3f4c60831b32cac0147253_DarrenContreras_Character_LOD0_lambert1_BaseColor.png",
+    "9702fdec4d1e44e2b58bcb29fbf86b69_Ambient Occlusion Map from Mesh lambert1.png",
+    "dc94d204f8114ea3b77ae903bd6bb132_Headbust_Roughness.png",
+    "676ab7bf04694ef3998aeba29db3ab8a_Headbust_Normal.png",
+    "197c637ba1694feeb57a8009988f685a_Headbust_Metallic.png",
+    "275e4ba0ff024a3ebfbf5e712c45975d_Headbust_Diff.png",
+    "1b4fd186954343268f577b649da21335_specular_cube.dds.png",
+    "95cafab5eb934bf8bb575f7f4ebc95ac_DarrenContreras_Character_LOD0_lambert1_Normal.png",
+    "d484a61f55594e31b8e5b08b10e9fd96_DarrenContreras_Character_LOD0_lambert1_Roughness.png",
+    "74e17da1baa9482ab92f352c6cfc6186_diffuse_cube.dds.png",
+    "12f5f21cbfcd4198adc6e378d104f144_Ambient Occlusion Map from Mesh lambert1.png",
+    "d26307f1b11145dba7f46c64da8e135f_ibl_brdf_lut.png"
+  ]
+}

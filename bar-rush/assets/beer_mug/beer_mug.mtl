@@ -1,0 +1,21 @@
+# Apple ModelI/O MTL File: beer_mug.mtl
+
+newmtl beermug_3
+	map_Kd beermug_3_diffuseColor.png
+	Kd 0.18 0.18 0.18
+	Ka 0 0 0
+	Ka 0 0 0
+	Ks 0
+	ao 1
+	ao 0
+	subsurface 0
+	map_metallic beermug_3_metallic.png
+	specularTint 0
+	map_roughness beermug_3_roughness.png
+	anisotropicRotation 0
+	sheen 0.05
+	sheenTint 0
+	clearCoat 0
+	clearCoatGloss 0.99
+	map_tangentSpaceNormal beermug_3_normal.png
+
