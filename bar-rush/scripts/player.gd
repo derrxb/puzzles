@@ -19,15 +19,35 @@ extends CharacterBody3D
 @export var gravity: float = 20.0
 @export var serve_range: float = 2.0
 
+# --- Camera / look -----------------------------------------------------------
+@export var mouse_sensitivity: float = 0.0025   # radians of turn per pixel moved
+@export var third_person_distance: float = 3.5  # SpringArm length in third person
+@export var interact_range: float = 3.0          # how far the look-raycast reaches
+const PITCH_LIMIT := 1.4                          # ~80 deg up/down
+
+@onready var _head: Node3D = $Head
+@onready var _spring: SpringArm3D = $Head/SpringArm3D
+@onready var _camera: Camera3D = $Head/SpringArm3D/Camera3D
+@onready var _raycast: RayCast3D = $Head/SpringArm3D/Camera3D/RayCast3D
+@onready var _body: MeshInstance3D = $Body
+
+var _third_person := false     # start in first person
+var _pitch := 0.0              # current head pitch (radians)
+# Cached each frame for the register key handler.
+var _gm: Node
+var _at_register := false
+# The customer we're currently looking at (so we can hide the panel on look-away).
+var _looked_customer: Node = null
+
 # --- Pour model (modeled on a real keg; see research notes) -------------------
 # A full pour takes ~4s. Foam grows from AGITATION, which is worse when the glass
 # is upright/full (auto-tilt). Foam always settles, turning partly back to liquid.
 # (fill_rate is the single knob for pour speed -- raise it for faster pours.)
 @export var fill_rate: float = 0.25     # liquid per second at full flow
-@export var foam_conv: float = 1.1      # foam made per unit beer at max agitation
+@export var foam_conv: float = 0.8      # foam made per unit beer at max agitation (lower = more forgiving)
 @export var agit_min: float = 0.10      # agitation when tilted/gentle (low fill)
-@export var agit_max: float = 1.0       # agitation when upright/full
-@export var foam_settle: float = 0.40   # fraction of foam that collapses per second
+@export var agit_max: float = 0.85      # agitation when upright/full
+@export var foam_settle: float = 0.5    # fraction of foam that collapses per second (higher = settles faster)
 @export var return_frac: float = 0.25   # settled foam that becomes liquid
 
 const CAPACITY := 1.0
@@ -80,6 +100,43 @@ func _ready() -> void:
 	_build_carry_visuals()
 	tray_changed.emit(_tray_types())
 
+	# Mouse-look: hide + lock the cursor to the window centre so moving the mouse
+	# turns the view instead of moving an OS pointer.
+	Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
+	# The look-raycast and the third-person spring arm must ignore the player's own
+	# body, or they'd immediately hit it.
+	_raycast.add_exception(self)
+	_spring.add_excluded_object(self.get_rid())
+	_set_view(false)
+
+
+# ------------------------------------------------------------------------------
+# LOOK: mouse turns the view; V toggles first/third person; Esc frees the cursor.
+# ------------------------------------------------------------------------------
+func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventMouseMotion and Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED:
+		# Horizontal mouse turns the whole body (so WASD stays relative to view);
+		# vertical mouse tilts just the head/camera, clamped so you can't flip over.
+		rotate_y(-event.relative.x * mouse_sensitivity)
+		_pitch = clampf(_pitch - event.relative.y * mouse_sensitivity, -PITCH_LIMIT, PITCH_LIMIT)
+		_head.rotation.x = _pitch
+	elif event.is_action_pressed("toggle_view"):
+		_set_view(not _third_person)
+	elif event.is_action_pressed("ui_cancel"):
+		# Esc toggles the cursor free (to reach the window / stop capturing).
+		if Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED:
+			Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
+		else:
+			Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
+
+
+# Switch between first person (camera at the eyes, own body hidden) and third
+# person (camera on a spring arm behind the bartender that avoids walls).
+func _set_view(third: bool) -> void:
+	_third_person = third
+	_spring.spring_length = third_person_distance if third else 0.0
+	_body.visible = third
+
 
 func _physics_process(delta: float) -> void:
 	_handle_movement(delta)
@@ -100,6 +157,8 @@ func _process(delta: float) -> void:
 	var register := get_tree().get_first_node_in_group("register")
 	var at_register: bool = register != null and gm != null \
 		and register.is_in_range(global_position) and gm.register_party() != null
+	_gm = gm
+	_at_register = at_register
 
 	# Space is the single action key. Priority: ring up at the register > serve a
 	# nearby customer > pour at a tap.
@@ -132,6 +191,85 @@ func _process(delta: float) -> void:
 	_update_active_visual()
 	pour_state_changed.emit(_beer_type != -1, _liquid, _foam, _ruined, _beer_type, _is_perfect())
 	_update_hint(tap, near_tap, at_register, gm)
+	_handle_look(gm)
+
+
+# ------------------------------------------------------------------------------
+# LOOK-AT INTERACTION: what the centre crosshair is pointing at.
+#   - a TABLE, while a party waits and it fits: press E to seat them there.
+#   - a CUSTOMER: show their mood panel while you look at them.
+# ------------------------------------------------------------------------------
+func _handle_look(gm: Node) -> void:
+	var ui := get_tree().get_first_node_in_group("ui")
+	var hit: Object = _raycast.get_collider() if _raycast.is_colliding() else null
+	var node := hit as Node
+
+	# Default: no world prompt, and drop any inspect panel we were showing.
+	var prompt := ""
+	var looking_customer: Node = null
+
+	if node != null:
+		var target := _interact_target(node)
+		if target != null and target.is_in_group("tables"):
+			var front = gm.get_front_party() if gm != null else null
+			if front != null and target.can_seat(front.kind, front.size):
+				prompt = "Press E to seat the %s here" % Globals.party_label(front.kind)
+				if Input.is_action_just_pressed("interact"):
+					gm.seat_front_party(target)
+			elif front != null:
+				prompt = "%s needs a different table" % target.label
+		elif target != null and target.is_in_group("customers"):
+			looking_customer = target
+
+	# Show / hide the customer inspect panel based on what we're looking at.
+	if looking_customer != _looked_customer:
+		_looked_customer = looking_customer
+		if ui != null:
+			if looking_customer != null and ui.has_method("show_personality"):
+				ui.show_personality(looking_customer)
+			elif ui.has_method("hide_inspect"):
+				ui.hide_inspect()
+
+	if ui != null and ui.has_method("set_interact_prompt"):
+		ui.set_interact_prompt(prompt)
+
+
+# The raycast can hit a table's StaticBody, a customer's Area3D, or a child
+# collider -- walk up to the node that carries the "tables"/"customers" group.
+func _interact_target(node: Node) -> Node:
+	var n := node
+	while n != null:
+		if n.is_in_group("tables") or n.is_in_group("customers"):
+			return n
+		n = n.get_parent()
+	return null
+
+
+# ------------------------------------------------------------------------------
+# REGISTER amount entry via the keyboard (the cursor is captured, so no clicking).
+#   CARD: type the total on number keys (Backspace clears), then hold Space.
+#   CASH: press 1 / 5 / 0 to hand over $1 / $5 / $10 (Backspace resets), Space gives.
+# The actual pay logic stays in GameManager; this only feeds it amounts.
+# ------------------------------------------------------------------------------
+func _unhandled_key_input(event: InputEvent) -> void:
+	if not _at_register or _gm == null or not _gm.register_active():
+		return
+	if not (event is InputEventKey and event.pressed and not event.echo):
+		return
+	var key: int = event.keycode
+	var digit := key - KEY_0            # 0..9 for the number-row keys
+	match _gm.register_method():
+		Globals.PayMethod.CARD:
+			if digit >= 0 and digit <= 9:
+				_gm.register_type_digit(digit)
+			elif key == KEY_BACKSPACE:
+				_gm.register_type_clear()
+		Globals.PayMethod.CASH:
+			match key:
+				KEY_1: _gm.register_change_add(1)
+				KEY_5: _gm.register_change_add(5)
+				KEY_0: _gm.register_change_add(10)
+				KEY_BACKSPACE: _gm.register_change_reset()
 
 
 # At the register, Space rings up the front party -- how depends on their method.
@@ -177,10 +315,7 @@ func _handle_movement(delta: float) -> void:
 		velocity.y = 0.0
 
 	move_and_slide()
-
-	if direction.length() > 0.1:
-		var target_yaw := atan2(direction.x, direction.z)
-		rotation.y = lerp_angle(rotation.y, target_yaw, 12.0 * delta)
+	# (The player's yaw is driven by mouse-look now, not by movement direction.)
 
 
 # ------------------------------------------------------------------------------
@@ -467,9 +602,9 @@ func _update_hint(tap: Dictionary, near_tap: bool, at_register: bool, gm: Node) 
 	if at_register and gm != null and gm.register_active():
 		match gm.register_method():
 			Globals.PayMethod.CASH:
-				hint = "Cash: click the $ buttons to make change, then Space to give it"
+				hint = "Cash: press 1 / 5 / 0 for $1 / $5 / $10 (Backspace resets), then Space to give"
 			Globals.PayMethod.CARD:
-				hint = "Card: type the total on the keypad, then hold Space to swipe"
+				hint = "Card: type the total on the number keys, then hold Space to swipe"
 			Globals.PayMethod.LINE:
 				hint = "LINE Pay: press Space to scan their QR code"
 		if hint != _last_hint:

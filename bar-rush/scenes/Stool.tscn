@@ -14,7 +14,14 @@ height = 0.55
 [sub_resource type="StandardMaterial3D" id="mat_seat"]
 albedo_color = Color(0.3, 0.22, 0.16, 1)
 
+; collision_layer 2 (not 1): the player's body does NOT collide with layer 2, so
+; you can walk right up to / through the small bar stools instead of wedging
+; between a stool and the counter. The look-raycast still detects it (its mask
+; includes layer 2) so you can still aim at a stool and press E to seat. mask 0
+; because the stool itself needs to detect nothing.
 [node name="Stool" type="StaticBody3D"]
+collision_layer = 2
+collision_mask = 0
 script = ExtResource("1_tbl")
 
 [node name="Collision" type="CollisionShape3D" parent="."]

@@ -50,7 +50,10 @@ const GREEN_TO := 0.90     # perfect-pour liquid window (top)
 
 # Seating panel pieces.
 var _seat_header: Label
-var _table_grid: GridContainer
+
+# Crosshair + look-at interaction prompt (first/third person).
+var _crosshair: ColorRect
+var _interact_prompt: Label
 
 # Register panel pieces.
 var _reg_backdrop: ColorRect
@@ -75,6 +78,7 @@ func _ready() -> void:
 	_build_meta_hud()
 	_build_inspect_panel()
 	_build_toast()
+	_build_crosshair()
 	# Connect after everyone's _ready has run so the groups are populated.
 	_connect_signals.call_deferred()
 
@@ -111,6 +115,48 @@ func _connect_signals() -> void:
 # Called by the player to show a context hint.
 func set_hint(text: String) -> void:
 	_hint_label.text = text
+
+
+# ------------------------------------------------------------------------------
+# Crosshair + look-at prompt
+# ------------------------------------------------------------------------------
+func _build_crosshair() -> void:
+	# A small centre dot so you know where you're aiming.
+	_crosshair = ColorRect.new()
+	_crosshair.color = Color(1, 1, 1, 0.75)
+	_crosshair.anchor_left = 0.5
+	_crosshair.anchor_right = 0.5
+	_crosshair.anchor_top = 0.5
+	_crosshair.anchor_bottom = 0.5
+	_crosshair.offset_left = -3.0
+	_crosshair.offset_right = 3.0
+	_crosshair.offset_top = -3.0
+	_crosshair.offset_bottom = 3.0
+	_crosshair.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(_crosshair)
+
+	# A prompt just under the crosshair ("Press E to seat ...").
+	_interact_prompt = Label.new()
+	_interact_prompt.anchor_left = 0.5
+	_interact_prompt.anchor_right = 0.5
+	_interact_prompt.anchor_top = 0.5
+	_interact_prompt.anchor_bottom = 0.5
+	_interact_prompt.offset_left = -220.0
+	_interact_prompt.offset_right = 220.0
+	_interact_prompt.offset_top = 20.0
+	_interact_prompt.offset_bottom = 52.0
+	_interact_prompt.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_interact_prompt.add_theme_font_size_override("font_size", 20)
+	_interact_prompt.add_theme_color_override("font_color", Color(0.5, 1.0, 0.6))
+	_interact_prompt.add_theme_color_override("font_outline_color", Color.BLACK)
+	_interact_prompt.add_theme_constant_override("outline_size", 6)
+	_interact_prompt.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(_interact_prompt)
+
+
+# Called by the player each frame with what the crosshair is pointing at ("" = nothing).
+func set_interact_prompt(text: String) -> void:
+	_interact_prompt.text = text
 
 
 # ------------------------------------------------------------------------------
@@ -239,33 +285,31 @@ func _on_pour_state_changed(active: bool, liquid: float, foam: float, ruined: bo
 # ------------------------------------------------------------------------------
 # Seating panel
 # ------------------------------------------------------------------------------
+# A small top-centre banner telling you who's waiting at the door. You seat them
+# by walking up to a free table and pressing E (handled in player.gd) -- there is
+# no clickable table list anymore.
 func _build_seating_panel() -> void:
 	var panel := PanelContainer.new()
 	panel.anchor_left = 0.5
 	panel.anchor_right = 0.5
-	panel.offset_left = -210.0
-	panel.offset_right = 210.0
+	panel.offset_left = -260.0
+	panel.offset_right = 260.0
 	panel.offset_top = 10.0
+	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(panel)
 
 	var margin := MarginContainer.new()
-	margin.add_theme_constant_override("margin_left", 10)
-	margin.add_theme_constant_override("margin_right", 10)
+	margin.add_theme_constant_override("margin_left", 12)
+	margin.add_theme_constant_override("margin_right", 12)
 	margin.add_theme_constant_override("margin_top", 6)
 	margin.add_theme_constant_override("margin_bottom", 8)
 	panel.add_child(margin)
 
-	var vbox := VBoxContainer.new()
-	margin.add_child(vbox)
-
 	_seat_header = Label.new()
 	_seat_header.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_seat_header.add_theme_font_size_override("font_size", 18)
-	vbox.add_child(_seat_header)
-
-	_table_grid = GridContainer.new()
-	_table_grid.columns = 3
-	vbox.add_child(_table_grid)
+	_seat_header.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	margin.add_child(_seat_header)
 
 
 func _refresh_seating() -> void:
@@ -278,36 +322,12 @@ func _refresh_seating() -> void:
 	if front == null:
 		_seat_header.text = "Nobody waiting to be seated"
 	else:
-		_seat_header.text = "Seat next: %s of %d   (%d waiting)\nPatience %d%%  ·  Tips %d%%  ·  Volatility %d%%" % [
+		_seat_header.text = "At the door: %s of %d  (%d waiting)  ·  walk to a free %s and press E\nPatience %d%%  ·  Tips %d%%  ·  Volatility %d%%" % [
 			Globals.party_label(front.kind), front.size, waiting,
+			Globals.party_label(front.kind),
 			int(front.avg_trait(Globals.Trait.PATIENCE) * 100),
 			int(front.avg_trait(Globals.Trait.GENEROSITY) * 100),
 			int(front.max_trait(Globals.Trait.VOLATILITY) * 100)]
-
-	# Rebuild the table buttons.
-	for child in _table_grid.get_children():
-		child.queue_free()
-
-	var tables := get_tree().get_nodes_in_group("tables")
-	tables.sort_custom(func(a, b): return a.label < b.label)
-
-	for table in tables:
-		var eligible: bool = front != null and table.can_seat(front.kind, front.size)
-		var btn := Button.new()
-		btn.text = "%s\n%d/%d free" % [table.label, table.free_count(), table.seat_count()]
-		btn.custom_minimum_size = Vector2(120, 44)
-		btn.disabled = not eligible
-		# FOCUS_NONE so clicking a table doesn't steal the Space key from pouring.
-		btn.focus_mode = Control.FOCUS_NONE
-		if eligible:
-			btn.add_theme_color_override("font_color", Color(0.4, 1.0, 0.5))
-		btn.pressed.connect(_on_table_pressed.bind(table))
-		_table_grid.add_child(btn)
-
-
-func _on_table_pressed(table) -> void:
-	if _game_manager != null:
-		_game_manager.seat_front_party(table)
 
 
 # ------------------------------------------------------------------------------
@@ -320,7 +340,7 @@ func _build_register_panel() -> void:
 	_reg_backdrop.color = Color(0, 0, 0, 0.55)
 	_reg_backdrop.anchor_right = 1.0
 	_reg_backdrop.anchor_bottom = 1.0
-	_reg_backdrop.mouse_filter = Control.MOUSE_FILTER_STOP
+	_reg_backdrop.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_reg_backdrop.visible = false
 	add_child(_reg_backdrop)
 
@@ -350,27 +370,18 @@ func _build_register_panel() -> void:
 	_reg_info = _centered_label("", 22)
 	vbox.add_child(_reg_info)
 
-	# CASH: change-making buttons.
+	# CASH: hand over change with the number keys (no clicking -- cursor is captured).
 	_reg_cash = HBoxContainer.new()
 	_reg_cash.alignment = BoxContainer.ALIGNMENT_CENTER
-	_reg_cash.add_child(_make_button("+$1", func(): _game_manager.register_change_add(1)))
-	_reg_cash.add_child(_make_button("+$5", func(): _game_manager.register_change_add(5)))
-	_reg_cash.add_child(_make_button("+$10", func(): _game_manager.register_change_add(10)))
-	_reg_cash.add_child(_make_button("Reset", func(): _game_manager.register_change_reset()))
+	_reg_cash.add_child(_centered_label("Press  1 / 5 / 0  →  +$1 / +$5 / +$10     ·     Backspace resets     ·     Space gives", 18))
 	vbox.add_child(_reg_cash)
 
-	# CARD: keypad + swipe bar.
+	# CARD: type the total on the number keys, then hold Space to swipe.
 	_reg_card = VBoxContainer.new()
 	_reg_card.add_theme_constant_override("separation", 10)
-	_reg_typed = _centered_label("$0", 28)
+	_reg_typed = _centered_label("Typed: $0", 28)
 	_reg_card.add_child(_reg_typed)
-	var pad := GridContainer.new()
-	pad.columns = 3
-	for d in [1, 2, 3, 4, 5, 6, 7, 8, 9]:
-		pad.add_child(_make_digit(d))
-	pad.add_child(_make_button("Clr", func(): _game_manager.register_type_clear()))
-	pad.add_child(_make_digit(0))
-	_reg_card.add_child(pad)
+	_reg_card.add_child(_centered_label("Type the total on the number keys  ·  Backspace clears  ·  hold Space to swipe", 16))
 	var swipe_bg := ColorRect.new()
 	swipe_bg.color = Color(0.15, 0.15, 0.18)
 	swipe_bg.custom_minimum_size = Vector2(360, 22)
@@ -521,9 +532,8 @@ func _build_inspect_panel() -> void:
 	vbox.add_child(_insp_title)
 	for i in Globals.TRAIT_LABELS.size():
 		vbox.add_child(_trait_row(Globals.TRAIT_LABELS[i]))
-	var close := _make_button("Close", func(): _insp_panel.visible = false)
-	close.custom_minimum_size = Vector2(100, 34)
-	vbox.add_child(close)
+	# No Close button: the panel shows while you LOOK at a customer and hides when
+	# you look away (driven by player.gd via show_personality / hide_inspect).
 
 
 func _trait_row(trait_name: String) -> Control:
@@ -578,7 +588,7 @@ func show_toast(text: String) -> void:
 	_toast_timer.start(3.0)
 
 
-# Called by a customer when it's clicked.
+# Called by the player while the crosshair is on a customer.
 func show_personality(customer) -> void:
 	if not is_instance_valid(customer):
 		return
@@ -587,3 +597,8 @@ func show_personality(customer) -> void:
 		if i < vals.size():
 			_insp_fills[i].size = Vector2(130.0 * clampf(vals[i], 0.0, 1.0), 16)
 	_insp_panel.visible = true
+
+
+# Called by the player when the crosshair leaves the customer.
+func hide_inspect() -> void:
+	_insp_panel.visible = false

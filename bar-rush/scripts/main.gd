@@ -34,6 +34,30 @@ const DOOR_WIDTH := 3.0
 func _ready() -> void:
 	_build_room()
 	_place_furniture()
+	_build_lights()
+
+
+# ------------------------------------------------------------------------------
+# Lighting: warm "pub lamp" pools over the bar and the games room so the space
+# reads cosy rather than flatly lit. Kept to a few omni lights (no shadows) for
+# the GL Compatibility renderer.
+# ------------------------------------------------------------------------------
+func _build_lights() -> void:
+	var spots := [
+		Vector3(-5.0, 2.8, 2.5),   # over the register wing / west
+		Vector3(0.0, 2.8, 1.5),    # over the games room / bar front
+		Vector3(6.0, 2.8, 2.0),    # over the east games room
+		Vector3(2.0, 2.8, 6.8),    # behind the bar (so the back isn't pitch black)
+	]
+	for p in spots:
+		var lamp := OmniLight3D.new()
+		lamp.position = p
+		lamp.light_color = Color(1.0, 0.82, 0.55)
+		lamp.light_energy = 4.0
+		lamp.omni_range = 9.0
+		lamp.omni_attenuation = 1.3
+		lamp.shadow_enabled = false
+		add_child(lamp)
 
 
 # ------------------------------------------------------------------------------
@@ -64,11 +88,14 @@ func _place_furniture() -> void:
 	for i in larges.size():
 		_place(LARGE_TABLE, larges[i], Globals.SeatKind.LARGE, "Big Table %d" % (i + 1))
 
-	# The cash register sits at the left end of the counter; the pay line forms
-	# in front of it, out into the room.
+	# The cash register sits at the EAST end of the counter. The pay line forms
+	# running north (-Z) out into the games room (see register.gd slot_position), so
+	# the register must sit where the games-room floor extends north of it -- i.e. in
+	# region A (x >= -1.5), NOT at the old far-west spot where the line ran off into
+	# the empty top-left void.
 	var register := REGISTER.instantiate()
 	add_child(register)
-	register.global_position = Vector3(-5, 0, 4.3)
+	register.global_position = Vector3(5.0, 0, 4.3)
 
 
 func _place(scene: PackedScene, pos: Vector3, seat_kind: int, label: String) -> void:
@@ -83,24 +110,67 @@ func _place(scene: PackedScene, pos: Vector3, seat_kind: int, label: String) -> 
 # Room shell
 # ------------------------------------------------------------------------------
 func _build_room() -> void:
-	var half_w := ROOM_WIDTH / 2.0
-	var half_d := ROOM_DEPTH / 2.0
+	# Invisible collision floor + walls that hug the model's MEASURED visible floor so
+	# the player can't walk off into the void AND never hits an invisible wall while
+	# real floor is still visible ahead (that mismatch is what felt like getting
+	# "stuck"). The floor was measured by sampling the model's floor meshes into an
+	# occupancy grid: it is an L (the only void is the top-LEFT corner, x<-1.2 & z<0.8);
+	# every other part is floor, all the way back to the far wall at z~9.2. So the
+	# collision fills the whole L right up to the visible stone walls:
+	#
+	#     z=-1.3  +-------- REGION A --------+   <- games-room front (door wall)
+	#             |                          |
+	#     z= 0.8  +-------------+            |
+	#             |  REGION B   | (A cont.)  |
+	#             |  (register, |            |
+	#             |   back bar) |            |
+	#     z= 9.0  +-------------+------------+   <- far wall (behind the bar)
+	#            x=-7.5      x=-1.2        x=9.3
+	#
+	# Region A = x:-1.2..9.3, z:-1.3..4.0 ;  Region B = x:-7.5..9.3, z:0.8..9.0.
+	# The counter (StaticBody, x:-4..4, z:4.5..5.5) stays a solid mid-floor obstacle, so
+	# you can walk the whole room -- front of the bar AND around behind it -- but can't
+	# walk THROUGH the bar. The inner notch (x=-1.2) is a wide doorway: no pinch.
+	var wall := Color(0.5, 0.5, 0.55)
+	var floor_col := Color(0.22, 0.22, 0.26)
 
-	# Floor: top surface at y = 0.
-	_add_box(Vector3(0, -0.15, 0), Vector3(ROOM_WIDTH, 0.3, ROOM_DEPTH), Color(0.22, 0.22, 0.26))
+	# Floors (top surface at y=0); the two boxes overlap, which is fine.
+	_add_floor(Vector2(-1.2, -1.3), Vector2(9.3, 4.0), floor_col)   # Region A
+	_add_floor(Vector2(-7.5, 0.8), Vector2(9.3, 9.0), floor_col)    # Region B
 
-	var wall_color := Color(0.5, 0.5, 0.55)
-	var wall_y := WALL_HEIGHT / 2.0
+	# Perimeter walls, traced as a closed loop around the L (corner -> corner).
+	var corners := [
+		Vector2(-1.2, -1.3),   # top-left of A (by the door wall)
+		Vector2(9.3, -1.3),    # top-right
+		Vector2(9.3, 9.0),     # bottom-right (far wall)
+		Vector2(-7.5, 9.0),    # bottom-left
+		Vector2(-7.5, 0.8),    # top-left of B
+		Vector2(-1.2, 0.8),    # inner notch corner
+	]
+	for i in corners.size():
+		_add_wall(corners[i], corners[(i + 1) % corners.size()], wall)
 
-	# Back wall split into two pieces to leave a doorway in the middle.
-	var side_len := (ROOM_WIDTH - DOOR_WIDTH) / 2.0
-	var side_center := DOOR_WIDTH / 2.0 + side_len / 2.0
-	_add_box(Vector3(-side_center, wall_y, -half_d), Vector3(side_len, WALL_HEIGHT, WALL_THICK), wall_color)
-	_add_box(Vector3(side_center, wall_y, -half_d), Vector3(side_len, WALL_HEIGHT, WALL_THICK), wall_color)
 
-	# Left and right walls.
-	_add_box(Vector3(-half_w, wall_y, 0), Vector3(WALL_THICK, WALL_HEIGHT, ROOM_DEPTH), wall_color)
-	_add_box(Vector3(half_w, wall_y, 0), Vector3(WALL_THICK, WALL_HEIGHT, ROOM_DEPTH), wall_color)
+# Floor slab spanning the rectangle between XZ corners `a` and `b` (top at y=0).
+func _add_floor(a: Vector2, b: Vector2, color: Color) -> void:
+	var center := Vector3((a.x + b.x) / 2.0, -0.15, (a.y + b.y) / 2.0)
+	var size := Vector3(absf(b.x - a.x), 0.3, absf(b.y - a.y))
+	_add_box(center, size, color)
+
+
+# Wall segment running along the floor edge from XZ point `a` to `b` (axis-aligned).
+# Its length is padded by WALL_THICK so perpendicular walls overlap cleanly at the
+# corners (no pin-hole gaps to slip through).
+func _add_wall(a: Vector2, b: Vector2, color: Color) -> void:
+	var center := Vector3((a.x + b.x) / 2.0, WALL_HEIGHT / 2.0, (a.y + b.y) / 2.0)
+	var dx := absf(b.x - a.x)
+	var dz := absf(b.y - a.y)
+	var size: Vector3
+	if dx >= dz:   # runs along X
+		size = Vector3(dx + WALL_THICK, WALL_HEIGHT, WALL_THICK)
+	else:          # runs along Z
+		size = Vector3(WALL_THICK, WALL_HEIGHT, dz + WALL_THICK)
+	_add_box(center, size, color)
 
 
 # Adds a box as a StaticBody3D. It always gets a collision shape; the visible

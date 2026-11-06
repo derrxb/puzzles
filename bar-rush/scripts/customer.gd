@@ -70,8 +70,6 @@ func _ready() -> void:
 	volatility = randf()
 	_build_visuals()
 	_build_click_area()
-	# Needed so clicking a customer (an Area3D) registers.
-	get_viewport().physics_object_picking = true
 
 
 # What the inspect panel reads: the four traits, aligned with Globals.TRAIT_LABELS.
@@ -283,12 +281,12 @@ func _update_patience_bar() -> void:
 
 
 # ------------------------------------------------------------------------------
-# Click-to-inspect: an invisible Area3D the mouse can hit. Clicking asks the UI
-# to show this customer's personality.
+# Inspect target: an invisible Area3D so the player's look-raycast can detect this
+# customer (the player shows the mood panel while looking at them). No click
+# handling -- the mouse is captured for look controls.
 # ------------------------------------------------------------------------------
 func _build_click_area() -> void:
 	var area := Area3D.new()
-	area.input_ray_pickable = true
 	var col := CollisionShape3D.new()
 	var shape := CapsuleShape3D.new()
 	shape.radius = 0.4
@@ -297,11 +295,3 @@ func _build_click_area() -> void:
 	col.position = Vector3(0, 0.9, 0)
 	area.add_child(col)
 	add_child(area)
-	area.input_event.connect(_on_click_area)
-
-
-func _on_click_area(_camera: Node, event: InputEvent, _pos: Vector3, _normal: Vector3, _shape: int) -> void:
-	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
-		var ui := get_tree().get_first_node_in_group("ui")
-		if ui != null and ui.has_method("show_personality"):
-			ui.show_personality(self)

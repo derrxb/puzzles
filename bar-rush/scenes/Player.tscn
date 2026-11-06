@@ -33,3 +33,22 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.2, 0.7)
 
 [node name="HeldDrink" type="MeshInstance3D" parent="Hold"]
 mesh = SubResource("mesh_held")
+
+; Camera rig: Head is the eye-height pitch pivot (yaw is applied to the whole
+; Player body). SpringArm length 0 = first-person (camera at the head); set to
+; ~3.5 for third-person, where the arm auto-retracts from walls. The RayCast is
+; the "what am I looking at" probe from screen centre (seating / inspect).
+[node name="Head" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.6, 0)
+
+[node name="SpringArm3D" type="SpringArm3D" parent="Head"]
+spring_length = 0.0
+
+[node name="Camera3D" type="Camera3D" parent="Head/SpringArm3D"]
+current = true
+fov = 70.0
+
+[node name="RayCast3D" type="RayCast3D" parent="Head/SpringArm3D/Camera3D"]
+target_position = Vector3(0, 0, -3)
+collide_with_areas = true
+collision_mask = 3
