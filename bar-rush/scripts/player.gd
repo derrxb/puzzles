@@ -23,6 +23,7 @@ extends CharacterBody3D
 @export var mouse_sensitivity: float = 0.0025   # radians of turn per pixel moved
 @export var third_person_distance: float = 2.6  # SpringArm length (zoomed in a bit)
 @export var camera_turn_speed: float = 2.2      # arrow-key camera orbit (rad/s)
+@export var touch_look_sensitivity: float = 0.0013  # phone drag-to-orbit (gentler than mouse)
 @export var interact_range: float = 3.0          # how far the look-raycast reaches
 const PITCH_LIMIT := 1.4                          # ~80 deg up/down
 
@@ -138,6 +139,9 @@ var _hold_base_y := 0.0                     # resting height of the Hold point (
 var _bob_time := 0.0
 
 var _last_hint: String = ""
+# Button names used in the on-screen hints (phone shows the touch buttons, desktop the keys).
+var _hint_act := "Space"
+var _hint_dump := "Q"
 
 
 func _ready() -> void:
@@ -158,6 +162,9 @@ func _ready() -> void:
 	_pitch = -0.42                  # start angled down for a 3rd-person view
 	_head.rotation.x = _pitch
 	_set_view(true)
+	if DisplayServer.is_touchscreen_available():
+		_hint_act = "POUR"
+		_hint_dump = "DUMP"
 
 
 # Camera control without losing the cursor: HOLD RIGHT-MOUSE and drag to orbit (the
@@ -187,10 +194,15 @@ func _unhandled_input(event: InputEvent) -> void:
 		if _cam_touches.size() < 2:
 			_prev_pinch = 0.0
 	elif event is InputEventScreenDrag:
-		_cam_touches[event.index] = event.position
+		var sd := event as InputEventScreenDrag
+		_cam_touches[sd.index] = sd.position
 		if _cam_touches.size() == 1:
-			rotate_y(-event.relative.x * mouse_sensitivity)
-			_pitch = clampf(_pitch - event.relative.y * mouse_sensitivity, -1.3, 0.4)
+			# Gentler than the mouse, and clamp each step so a fast flick can't snap-spin
+			# (that was the "glitchy while walking" feeling).
+			var dx := clampf(-sd.relative.x * touch_look_sensitivity, -0.09, 0.09)
+			var dy := clampf(-sd.relative.y * touch_look_sensitivity, -0.09, 0.09)
+			rotate_y(dx)
+			_pitch = clampf(_pitch + dy, -1.3, 0.4)
 			_head.rotation.x = _pitch
 		elif _cam_touches.size() == 2:
 			var ks := _cam_touches.keys()
@@ -516,7 +528,7 @@ func _handle_movement(delta: float) -> void:
 	# is what makes movement read naturally instead of sliding sideways.
 	if _char != null and direction.length() > 0.1:
 		var target := atan2(direction.x, direction.z)
-		_char.global_rotation.y = lerp_angle(_char.global_rotation.y, target, clampf(delta * 12.0, 0.0, 1.0))
+		_char.global_rotation.y = lerp_angle(_char.global_rotation.y, target, clampf(delta * 8.0, 0.0, 1.0))
 
 
 # ------------------------------------------------------------------------------
@@ -849,11 +861,11 @@ func _update_hint(tap: Dictionary, near_tap: bool, at_register: bool, gm: Node) 
 	if at_register and gm != null and gm.register_active():
 		match gm.register_method():
 			Globals.PayMethod.CASH:
-				hint = "Cash: press 1 / 5 / 0 for $1 / $5 / $10 (Backspace resets), then Space to give"
+				hint = "Cash: make the change on the buttons, then %s to give" % _hint_act
 			Globals.PayMethod.CARD:
-				hint = "Card: type the total on the number keys, then hold Space to swipe"
+				hint = "Card: enter the total, then HOLD %s to swipe" % _hint_act
 			Globals.PayMethod.LINE:
-				hint = "LINE Pay: press Space to scan their QR code"
+				hint = "LINE Pay: press %s to scan their QR code" % _hint_act
 		if hint != _last_hint:
 			_last_hint = hint
 			var ui0 := get_tree().get_first_node_in_group("ui")
@@ -865,26 +877,26 @@ func _update_hint(tap: Dictionary, near_tap: bool, at_register: bool, gm: Node) 
 
 	if customer != null and _find_tray_glass(customer.get_order()) != -1:
 		# Something we can hand over is right here -- serving takes priority.
-		hint = "Press Space to serve their %s" % Globals.name_for(customer.get_order())
+		hint = "Press %s to serve their %s" % [_hint_act, Globals.name_for(customer.get_order())]
 	elif _beer_type != -1:
 		# We're filling a glass.
 		if _ruined:
-			hint = "Spilled! Ease off the pour -- or press Q to toss it"
+			hint = "Spilled! Ease off the pour -- or press %s to toss it" % _hint_dump
 		elif _is_perfect():
 			hint = "Perfect pour! let go -- it trays up on its own"
 		else:
-			hint = "Hold Space to fill, then ease off and let the foam settle into the green"
+			hint = "Hold %s to fill, then ease off and let the foam settle into the green" % _hint_act
 	elif near_tap:
 		if tray_count >= _capacity():
 			hint = "Tray full (%d) -- go serve some beers" % tray_count
 		else:
-			hint = "Hold Space to pour a %s" % Globals.name_for(tap["type"])
+			hint = "Hold %s to pour a %s" % [_hint_act, Globals.name_for(tap["type"])]
 	elif customer != null:
-		hint = "They want a %s -- none on your tray (Q to dump a wrong one)" % Globals.name_for(customer.get_order())
+		hint = "They want a %s -- none on your tray (%s dumps a wrong one)" % [Globals.name_for(customer.get_order()), _hint_dump]
 	elif tray_count == 0:
-		hint = "Go to a tap and hold Space to pour beers"
+		hint = "Walk to the bar and hold %s to pour beers" % _hint_act
 	else:
-		hint = "Carrying %d beer(s) -- serve them (Q dumps a wrong beer)" % tray_count
+		hint = "Carrying %d beer(s) -- walk to a customer and press %s to serve" % [tray_count, _hint_act]
 
 	if hint != _last_hint:
 		_last_hint = hint
