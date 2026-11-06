@@ -22,6 +22,7 @@ extends CharacterBody3D
 # --- Camera / look -----------------------------------------------------------
 @export var mouse_sensitivity: float = 0.0025   # radians of turn per pixel moved
 @export var third_person_distance: float = 2.6  # SpringArm length (zoomed in a bit)
+@export var camera_turn_speed: float = 2.2      # arrow-key camera orbit (rad/s)
 @export var interact_range: float = 3.0          # how far the look-raycast reaches
 const PITCH_LIMIT := 1.4                          # ~80 deg up/down
 
@@ -88,14 +89,18 @@ const BARTENDER_HEAD_TEX := preload("res://assets/bartender/textures/275e4ba0ff0
 # move = "Running with tray". (Plain idle/walk .fbx are still in anims/ if we want them.)
 const BARTENDER_IDLE := preload("res://assets/bartender_rigged/anims/carry_walk.fbx")
 const BARTENDER_WALK := preload("res://assets/bartender_rigged/anims/carry_run.fbx")
-@export var character_scale := 0.28           # a touch smaller -- felt big for the bar
+@export var character_scale := 0.33           # taller (user: too short)
 # Feet-on-floor offset. MEASURED from the actual FOOT BONE in the carry pose (not the
 # bind-pose mesh AABB, which is ~0.7 too low and was floating him): the toe bone sits at
 # ~offset+0.0, so this puts the sole on the bar floor (y~0.04).
 @export var character_foot_offset := 0.07
 @export var character_body_color := Color(0.62, 0.55, 0.45)
-@export var hold_point := Vector3(0, 1.5, -0.22)      # 3rd person: tray in the hands
-@export var hold_point_fp := Vector3(0, 0.95, -0.62)  # 1st person: low, out of the POV
+# The tray follows the bartender's hands (measured in his carry pose): this far UP from
+# his feet and FORWARD in the way he's facing. It rotates with him and hides when empty.
+@export var tray_hand_up := 1.03
+@export var tray_hand_forward := 0.26
+@export var hold_point := Vector3(0, 1.5, -0.22)      # (legacy) initial tray spot
+@export var hold_point_fp := Vector3(0, 0.95, -0.62)
 var _char: Node3D
 var _char_anim: AnimationPlayer
 var _cur_anim := ""
@@ -148,14 +153,28 @@ func _ready() -> void:
 	# The body doesn't rotate (no mouse-look); it faces the bar so the follow-cam sits
 	# on the room side looking at the counter. The bartender turns to face his movement.
 	rotation.y = PI
-	_head.rotation.x = -0.42        # angle the camera down for a 3rd-person view
+	_pitch = -0.42                  # start angled down for a 3rd-person view
+	_head.rotation.x = _pitch
 	_set_view(true)
 
 
-func _unhandled_input(_event: InputEvent) -> void:
-	# No mouse-look / view toggle anymore -- third person only, cursor is free for the
-	# on-screen seat selector.
-	pass
+# Camera control without losing the cursor: HOLD RIGHT-MOUSE and drag to orbit (the
+# cursor hides while dragging, returns on release so you can click the seat selector);
+# SCROLL to zoom. Left-click stays free for the UI.
+func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton:
+		if event.button_index == MOUSE_BUTTON_RIGHT:
+			Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED if event.pressed else Input.MOUSE_MODE_VISIBLE)
+		elif event.button_index == MOUSE_BUTTON_WHEEL_UP:
+			third_person_distance = clampf(third_person_distance - 0.4, 1.2, 6.0)
+			_spring.spring_length = third_person_distance
+		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+			third_person_distance = clampf(third_person_distance + 0.4, 1.2, 6.0)
+			_spring.spring_length = third_person_distance
+	elif event is InputEventMouseMotion and Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED:
+		rotate_y(-event.relative.x * mouse_sensitivity)
+		_pitch = clampf(_pitch - event.relative.y * mouse_sensitivity, -1.3, 0.4)
+		_head.rotation.x = _pitch
 
 
 # Third person: camera on a spring arm behind the bartender (auto-avoids walls).
@@ -262,6 +281,34 @@ func _collect_meshes(n: Node) -> Array:
 
 func _physics_process(delta: float) -> void:
 	_handle_movement(delta)
+	_handle_camera(delta)
+	_update_tray_follow()
+
+
+# Keep the tray in the bartender's hands: placed at his hand height/forward and turned to
+# face the way he's facing. Hidden when there are no beers on it.
+func _update_tray_follow() -> void:
+	if _char == null:
+		return
+	$Hold.visible = not _tray.is_empty()
+	if _tray.is_empty():
+		return
+	var yaw := _char.global_rotation.y
+	var fwd := Vector3(sin(yaw), 0.0, cos(yaw))      # the model faces +Z at yaw 0
+	$Hold.global_position = _char.global_position + Vector3(0, tray_hand_up, 0) + fwd * tray_hand_forward
+	$Hold.global_rotation = Vector3(0, yaw, 0)
+
+
+# Orbit the camera with the ARROW KEYS (Mac-trackpad friendly -- no right mouse needed);
+# two-finger scroll still zooms. Left/Right swing around, Up/Down tilt.
+func _handle_camera(delta: float) -> void:
+	var yaw_in := (1.0 if Input.is_key_pressed(KEY_RIGHT) else 0.0) - (1.0 if Input.is_key_pressed(KEY_LEFT) else 0.0)
+	var pitch_in := (1.0 if Input.is_key_pressed(KEY_UP) else 0.0) - (1.0 if Input.is_key_pressed(KEY_DOWN) else 0.0)
+	if yaw_in != 0.0:
+		rotate_y(-yaw_in * camera_turn_speed * delta)
+	if pitch_in != 0.0:
+		_pitch = clampf(_pitch + pitch_in * camera_turn_speed * delta, -1.3, 0.4)
+		_head.rotation.x = _pitch
 
 
 func _process(delta: float) -> void:
@@ -313,7 +360,6 @@ func _process(delta: float) -> void:
 	_pouring_now = pouring
 	if not tap.is_empty():
 		_active_tap_world = tap["position"]   # remember which faucet to pour under
-	_update_hold_bob(delta)
 	_update_character_anim()
 	_update_active_visual()
 	pour_state_changed.emit(_beer_type != -1, _liquid, _foam, _ruined, _beer_type, _is_perfect())
