@@ -88,10 +88,13 @@ const GLASS_SIT_Y := 1.27
 # flat colour because that download's body texture is corrupted.
 const BARTENDER := preload("res://assets/bartender_rigged/bartender.fbx")
 const BARTENDER_HEAD_TEX := preload("res://assets/bartender/textures/275e4ba0ff024a3ebfbf5e712c45975d_Headbust_Diff.png")
-# Carry clips: he always holds a tray, so idle = "Carrying tray" (standing with tray),
-# move = "Running with tray". (Plain idle/walk .fbx are still in anims/ if we want them.)
-const BARTENDER_IDLE := preload("res://assets/bartender_rigged/anims/carry_walk.fbx")
-const BARTENDER_WALK := preload("res://assets/bartender_rigged/anims/carry_run.fbx")
+# Four pose clips: plain idle/walk (arms down) for when his hands are empty or he's
+# pouring, and carry idle/move ("Carrying tray" / "Running with tray") when he's holding
+# beers on the tray.
+const BARTENDER_IDLE := preload("res://assets/bartender_rigged/anims/idle.fbx")
+const BARTENDER_WALK := preload("res://assets/bartender_rigged/anims/walk.fbx")
+const BARTENDER_CARRY_IDLE := preload("res://assets/bartender_rigged/anims/carry_walk.fbx")
+const BARTENDER_CARRY_WALK := preload("res://assets/bartender_rigged/anims/carry_run.fbx")
 @export var character_scale := 0.33           # taller (user: too short)
 # Feet-on-floor offset. MEASURED from the actual FOOT BONE in the carry pose (not the
 # bind-pose mesh AABB, which is ~0.7 too low and was floating him): the toe bone sits at
@@ -253,6 +256,8 @@ func _build_character() -> void:
 	if _char_anim != null:
 		_add_clip(BARTENDER_IDLE, "idle", false)
 		_add_clip(BARTENDER_WALK, "walk", true)
+		_add_clip(BARTENDER_CARRY_IDLE, "carry_idle", false)
+		_add_clip(BARTENDER_CARRY_WALK, "carry_move", true)
 		_char_anim.play("idle")
 		_cur_anim = "idle"
 
@@ -300,10 +305,24 @@ func _freeze_hips_xz(anim: Animation) -> void:
 func _update_character_anim() -> void:
 	if _char_anim == null:
 		return
-	var want := "walk" if Vector2(velocity.x, velocity.z).length() > 0.3 else "idle"
+	var moving := Vector2(velocity.x, velocity.z).length() > 0.3
+	# Carry pose only when actually holding beers AND not pouring; otherwise plain pose
+	# (arms down) so he isn't holding an invisible tray.
+	var show_carry := _carrying_tray()
+	var want: String
+	if moving:
+		want = "carry_move" if show_carry else "walk"
+	else:
+		want = "carry_idle" if show_carry else "idle"
 	if want != _cur_anim:
 		_cur_anim = want
 		_char_anim.play(want, 0.2)
+
+
+# True when the bartender should be shown holding the tray: he has beers and isn't
+# mid-pour at the bar.
+func _carrying_tray() -> bool:
+	return not _tray.is_empty() and _beer_type == -1
 
 
 func _collect_meshes(n: Node) -> Array:
@@ -326,8 +345,8 @@ func _physics_process(delta: float) -> void:
 func _update_tray_follow() -> void:
 	if _char == null:
 		return
-	$Hold.visible = not _tray.is_empty()
-	if _tray.is_empty():
+	$Hold.visible = _carrying_tray()        # hide when empty-handed or mid-pour
+	if not _carrying_tray():
 		return
 	var yaw := _char.global_rotation.y
 	var fwd := Vector3(sin(yaw), 0.0, cos(yaw))      # the model faces +Z at yaw 0
@@ -524,11 +543,18 @@ func _handle_movement(delta: float) -> void:
 
 	move_and_slide()
 
-	# Turn the bartender to face the way he's walking (the body/camera stay put). This
-	# is what makes movement read naturally instead of sliding sideways.
-	if _char != null and direction.length() > 0.1:
-		var target := atan2(direction.x, direction.z)
-		_char.global_rotation.y = lerp_angle(_char.global_rotation.y, target, clampf(delta * 8.0, 0.0, 1.0))
+	# Turn the bartender to face where he's walking; while pouring (standing at the bar)
+	# turn him to face the tap so the pour reads right.
+	if _char != null:
+		var face_dir := Vector2.ZERO
+		if direction.length() > 0.1:
+			face_dir = Vector2(direction.x, direction.z)
+		elif _beer_type != -1:
+			var to_tap := _active_tap_world - _char.global_position
+			face_dir = Vector2(to_tap.x, to_tap.z)
+		if face_dir.length() > 0.1:
+			var target := atan2(face_dir.x, face_dir.y)
+			_char.global_rotation.y = lerp_angle(_char.global_rotation.y, target, clampf(delta * 8.0, 0.0, 1.0))
 
 
 # ------------------------------------------------------------------------------
@@ -562,6 +588,9 @@ func _handle_pour(tap: Dictionary, delta: float) -> bool:
 		_foam = CAPACITY - _liquid
 		_pour_locked = true                         # re-press to pour a fresh one
 		_report_reset()                             # a spill breaks the combo
+		var ui := get_tree().get_first_node_in_group("ui")
+		if ui != null and ui.has_method("show_toast"):
+			ui.show_toast("Overflowed! Too much foam — press %s to toss it" % _hint_dump)
 	return true
 
 
