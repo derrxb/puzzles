@@ -110,6 +110,8 @@ const BARTENDER_CARRY_WALK := preload("res://assets/bartender_rigged/anims/carry
 var _char: Node3D
 var _char_anim: AnimationPlayer
 var _cur_anim := ""
+var _char_mats: Array[StandardMaterial3D] = []   # the bartender's materials (to fade him)
+var _char_faded := false
 
 # The tray's contents: each entry is {"type": int, "quality": float}.
 signal tray_changed(types: Array)
@@ -247,6 +249,7 @@ func _build_character() -> void:
 			mat.albedo_color = character_body_color
 			mat.roughness = 0.85
 		mi.material_override = mat
+		_char_mats.append(mat)
 	_char.visible = false
 
 	# Load the idle + walk clips onto the character's own AnimationPlayer. The walk
@@ -323,6 +326,22 @@ func _update_character_anim() -> void:
 # mid-pour at the bar.
 func _carrying_tray() -> bool:
 	return not _tray.is_empty() and _beer_type == -1
+
+
+# Fade the bartender to semi-transparent while pouring so his body doesn't hide the glass
+# filling on the counter (the camera sits behind him, looking at the bar).
+func _update_char_fade() -> void:
+	var want_fade := _beer_type != -1
+	if want_fade == _char_faded:
+		return
+	_char_faded = want_fade
+	for m in _char_mats:
+		if want_fade:
+			m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+			m.albedo_color.a = 0.3
+		else:
+			m.transparency = BaseMaterial3D.TRANSPARENCY_DISABLED
+			m.albedo_color.a = 1.0
 
 
 func _collect_meshes(n: Node) -> Array:
@@ -416,6 +435,7 @@ func _process(delta: float) -> void:
 	if not tap.is_empty():
 		_active_tap_world = tap["position"]   # remember which faucet to pour under
 	_update_character_anim()
+	_update_char_fade()
 	_update_active_visual()
 	pour_state_changed.emit(_beer_type != -1, _liquid, _foam, _ruined, _beer_type, _is_perfect())
 	_update_hint(tap, near_tap, at_register, gm)
