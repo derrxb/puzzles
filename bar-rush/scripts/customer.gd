@@ -18,7 +18,7 @@ extends Node3D
 enum State { WALKING, ORDERING, DRINKING, IDLE, LEAVING }
 
 @export var move_speed: float = 2.5
-@export var patience_time: float = 50.0           # seconds to fill one order
+@export var patience_time: float = 85.0           # seconds to fill one order (raised: customers got mad too fast)
 @export var drink_time_min: float = 8.0           # happy drinking before reorder
 @export var drink_time_max: float = 16.0
 

@@ -45,11 +45,12 @@ var _pour_foam: ColorRect
 var _pour_label: Label
 const METER_W := 100.0
 const METER_H := 340.0
-const GREEN_FROM := 0.82   # perfect-pour liquid window (bottom)
-const GREEN_TO := 0.90     # perfect-pour liquid window (top)
+const GREEN_FROM := 0.74   # perfect-pour liquid window (bottom)
+const GREEN_TO := 0.95     # perfect-pour liquid window (top)
 
 # Seating panel pieces.
 var _seat_header: Label
+var _table_grid: HBoxContainer
 
 # Crosshair + look-at interaction prompt (first/third person).
 var _crosshair: ColorRect
@@ -123,7 +124,7 @@ func set_hint(text: String) -> void:
 func _build_crosshair() -> void:
 	# A small centre dot so you know where you're aiming.
 	_crosshair = ColorRect.new()
-	_crosshair.color = Color(1, 1, 1, 0.75)
+	_crosshair.color = Color(1, 1, 1, 0.0)   # hidden: third-person free-cursor, no center aim
 	_crosshair.anchor_left = 0.5
 	_crosshair.anchor_right = 0.5
 	_crosshair.anchor_top = 0.5
@@ -292,10 +293,10 @@ func _build_seating_panel() -> void:
 	var panel := PanelContainer.new()
 	panel.anchor_left = 0.5
 	panel.anchor_right = 0.5
-	panel.offset_left = -260.0
-	panel.offset_right = 260.0
+	panel.offset_left = -300.0
+	panel.offset_right = 300.0
 	panel.offset_top = 10.0
-	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.mouse_filter = Control.MOUSE_FILTER_PASS   # let the table buttons be clicked
 	add_child(panel)
 
 	var margin := MarginContainer.new()
@@ -303,13 +304,25 @@ func _build_seating_panel() -> void:
 	margin.add_theme_constant_override("margin_right", 12)
 	margin.add_theme_constant_override("margin_top", 6)
 	margin.add_theme_constant_override("margin_bottom", 8)
+	margin.mouse_filter = Control.MOUSE_FILTER_PASS
 	panel.add_child(margin)
+
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 6)
+	vbox.mouse_filter = Control.MOUSE_FILTER_PASS
+	margin.add_child(vbox)
 
 	_seat_header = Label.new()
 	_seat_header.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_seat_header.add_theme_font_size_override("font_size", 18)
 	_seat_header.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	margin.add_child(_seat_header)
+	vbox.add_child(_seat_header)
+
+	# A row of buttons -- one per free table the waiting party can use. Click to seat.
+	_table_grid = HBoxContainer.new()
+	_table_grid.alignment = BoxContainer.ALIGNMENT_CENTER
+	_table_grid.add_theme_constant_override("separation", 6)
+	vbox.add_child(_table_grid)
 
 
 func _refresh_seating() -> void:
@@ -319,15 +332,40 @@ func _refresh_seating() -> void:
 	var front = _game_manager.get_front_party()
 	var waiting: int = _game_manager.get_queue().size()
 
+	# Clear the old table buttons.
+	for c in _table_grid.get_children():
+		c.queue_free()
+
 	if front == null:
 		_seat_header.text = "Nobody waiting to be seated"
+		return
+
+	_seat_header.text = "At the door: %s of %d  (%d waiting)  ·  click a seat below\nPatience %d%%  ·  Tips %d%%  ·  Volatility %d%%" % [
+		Globals.party_label(front.kind), front.size, waiting,
+		int(front.avg_trait(Globals.Trait.PATIENCE) * 100),
+		int(front.avg_trait(Globals.Trait.GENEROSITY) * 100),
+		int(front.max_trait(Globals.Trait.VOLATILITY) * 100)]
+
+	# One button per free, eligible table -- click to seat the party there (no walking).
+	var tables: Array = _game_manager.eligible_tables(front)
+	if tables.is_empty():
+		var lbl := Label.new()
+		lbl.text = "(no free %s table — bus one first)" % Globals.party_label(front.kind)
+		lbl.add_theme_font_size_override("font_size", 14)
+		_table_grid.add_child(lbl)
 	else:
-		_seat_header.text = "At the door: %s of %d  (%d waiting)  ·  walk to a free %s and press E\nPatience %d%%  ·  Tips %d%%  ·  Volatility %d%%" % [
-			Globals.party_label(front.kind), front.size, waiting,
-			Globals.party_label(front.kind),
-			int(front.avg_trait(Globals.Trait.PATIENCE) * 100),
-			int(front.avg_trait(Globals.Trait.GENEROSITY) * 100),
-			int(front.max_trait(Globals.Trait.VOLATILITY) * 100)]
+		for table in tables:
+			var btn := Button.new()
+			btn.text = str(table.label) if table.get("label") != null else "Seat"
+			btn.add_theme_font_size_override("font_size", 14)
+			btn.pressed.connect(_on_seat_table_pressed.bind(table))
+			_table_grid.add_child(btn)
+
+
+func _on_seat_table_pressed(table) -> void:
+	if _game_manager != null and is_instance_valid(_game_manager):
+		_game_manager.seat_front_party(table)
+		_refresh_seating()
 
 
 # ------------------------------------------------------------------------------

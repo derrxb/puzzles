@@ -47,9 +47,10 @@ func _ready() -> void:
 			continue
 		_taps.append(tap)
 		tap.mesh = knob
-		# Small colored bead at each faucet NOZZLE (low, just above where the glass
-		# sits) -- so it reads as the tap output, not a big ball floating up high.
-		tap.position = Vector3((i - 1) * 1.4, 1.62, -0.32)
+		# Small colored bead AT the tower's real spout tips (measured: x~±1.3, y~1.8,
+		# z~5.0 world = local z~0). The glass parks under this and the stream pours from
+		# here, so the pour lines up with the nozzle.
+		tap.position = Vector3((i - 1) * 1.3, 1.8, 0.0)
 		tap.scale = Vector3.ONE
 		var mat := StandardMaterial3D.new()
 		mat.albedo_color = Globals.color_for(i)

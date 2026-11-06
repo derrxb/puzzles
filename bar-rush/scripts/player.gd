@@ -21,7 +21,7 @@ extends CharacterBody3D
 
 # --- Camera / look -----------------------------------------------------------
 @export var mouse_sensitivity: float = 0.0025   # radians of turn per pixel moved
-@export var third_person_distance: float = 3.5  # SpringArm length in third person
+@export var third_person_distance: float = 2.6  # SpringArm length (zoomed in a bit)
 @export var interact_range: float = 3.0          # how far the look-raycast reaches
 const PITCH_LIMIT := 1.4                          # ~80 deg up/down
 
@@ -43,7 +43,7 @@ var _looked_customer: Node = null
 # A full pour takes ~4s. Foam grows from AGITATION, which is worse when the glass
 # is upright/full (auto-tilt). Foam always settles, turning partly back to liquid.
 # (fill_rate is the single knob for pour speed -- raise it for faster pours.)
-@export var fill_rate: float = 0.25     # liquid per second at full flow
+@export var fill_rate: float = 0.42     # liquid per second at full flow (raised: pour was too slow)
 @export var foam_conv: float = 0.8      # foam made per unit beer at max agitation (lower = more forgiving)
 @export var agit_min: float = 0.10      # agitation when tilted/gentle (low fill)
 @export var agit_max: float = 0.85      # agitation when upright/full
@@ -52,11 +52,12 @@ var _looked_customer: Node = null
 
 const CAPACITY := 1.0
 # A PERFECT pour: beer near the brim with a 1-2 finger head and no spill.
-const PERFECT_LIQ_LO := 0.82
-const PERFECT_LIQ_HI := 0.90
-const PERFECT_FOAM_LO := 0.08
-const PERFECT_FOAM_HI := 0.18
-const PERFECT_TOTAL_MAX := 0.98
+# Perfect-pour window -- widened so a good pour is easier to hit and read.
+const PERFECT_LIQ_LO := 0.74
+const PERFECT_LIQ_HI := 0.95
+const PERFECT_FOAM_LO := 0.05
+const PERFECT_FOAM_HI := 0.26
+const PERFECT_TOTAL_MAX := 0.99
 const GOOD_LIQ := 0.6
 const MIN_SERVE := 0.2
 const MAX_TRAY := 4                     # most slots we ever build; capacity is dynamic
@@ -88,11 +89,13 @@ const BARTENDER_HEAD_TEX := preload("res://assets/bartender/textures/275e4ba0ff0
 const BARTENDER_IDLE := preload("res://assets/bartender_rigged/anims/carry_walk.fbx")
 const BARTENDER_WALK := preload("res://assets/bartender_rigged/anims/carry_run.fbx")
 @export var character_scale := 0.28           # a touch smaller -- felt big for the bar
-# Feet-on-floor offset: the model's lowest point sits at -2.49*scale, and the visible
-# bar floor is at y~0.04, so lift by that much (0.04 + 2.49*scale).
-@export var character_foot_offset := 0.74
+# Feet-on-floor offset. MEASURED from the actual FOOT BONE in the carry pose (not the
+# bind-pose mesh AABB, which is ~0.7 too low and was floating him): the toe bone sits at
+# ~offset+0.0, so this puts the sole on the bar floor (y~0.04).
+@export var character_foot_offset := 0.07
 @export var character_body_color := Color(0.62, 0.55, 0.45)
-@export var hold_point := Vector3(0, 1.5, -0.22)   # tray position = character's hands
+@export var hold_point := Vector3(0, 1.5, -0.22)      # 3rd person: tray in the hands
+@export var hold_point_fp := Vector3(0, 0.95, -0.62)  # 1st person: low, out of the POV
 var _char: Node3D
 var _char_anim: AnimationPlayer
 var _cur_anim := ""
@@ -138,46 +141,34 @@ func _ready() -> void:
 
 	# Mouse-look: hide + lock the cursor to the window centre so moving the mouse
 	# turns the view instead of moving an OS pointer.
-	Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
-	# The look-raycast and the third-person spring arm must ignore the player's own
-	# body, or they'd immediately hit it.
+	# Third-person only, with a FREE cursor so you can click the seat selector.
+	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 	_raycast.add_exception(self)
 	_spring.add_excluded_object(self.get_rid())
-	_set_view(false)
+	# The body doesn't rotate (no mouse-look); it faces the bar so the follow-cam sits
+	# on the room side looking at the counter. The bartender turns to face his movement.
+	rotation.y = PI
+	_head.rotation.x = -0.42        # angle the camera down for a 3rd-person view
+	_set_view(true)
 
 
-# ------------------------------------------------------------------------------
-# LOOK: mouse turns the view; V toggles first/third person; Esc frees the cursor.
-# ------------------------------------------------------------------------------
-func _unhandled_input(event: InputEvent) -> void:
-	if event is InputEventMouseMotion and Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED:
-		# Horizontal mouse turns the whole body (so WASD stays relative to view);
-		# vertical mouse tilts just the head/camera, clamped so you can't flip over.
-		rotate_y(-event.relative.x * mouse_sensitivity)
-		_pitch = clampf(_pitch - event.relative.y * mouse_sensitivity, -PITCH_LIMIT, PITCH_LIMIT)
-		_head.rotation.x = _pitch
-	elif event.is_action_pressed("toggle_view"):
-		_set_view(not _third_person)
-	elif event.is_action_pressed("ui_cancel"):
-		# Esc toggles the cursor free (to reach the window / stop capturing).
-		if Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED:
-			Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
-		else:
-			Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
+func _unhandled_input(_event: InputEvent) -> void:
+	# No mouse-look / view toggle anymore -- third person only, cursor is free for the
+	# on-screen seat selector.
+	pass
 
 
-# Switch between first person (camera at the eyes, own body hidden) and third
-# person (camera on a spring arm behind the bartender that avoids walls).
+# Third person: camera on a spring arm behind the bartender (auto-avoids walls).
 func _set_view(third: bool) -> void:
 	_third_person = third
-	_spring.spring_length = third_person_distance if third else 0.0
-	# Show the bartender model in third person (fall back to the capsule if it's
-	# missing). Never show your own body in first person.
+	_spring.spring_length = third_person_distance
 	if _char != null:
-		_char.visible = third
+		_char.visible = true
 		_body.visible = false
 	else:
-		_body.visible = third
+		_body.visible = true
+	$Hold.position = hold_point
+	_hold_base_y = hold_point.y
 
 
 # Build the rigged bartender as the third-person body: scaled to ~1.8m, feet on the
@@ -327,7 +318,6 @@ func _process(delta: float) -> void:
 	_update_active_visual()
 	pour_state_changed.emit(_beer_type != -1, _liquid, _foam, _ruined, _beer_type, _is_perfect())
 	_update_hint(tap, near_tap, at_register, gm)
-	_handle_look(gm)
 
 
 # ------------------------------------------------------------------------------
@@ -451,7 +441,12 @@ func _handle_movement(delta: float) -> void:
 		velocity.y = 0.0
 
 	move_and_slide()
-	# (The player's yaw is driven by mouse-look now, not by movement direction.)
+
+	# Turn the bartender to face the way he's walking (the body/camera stay put). This
+	# is what makes movement read naturally instead of sliding sideways.
+	if _char != null and direction.length() > 0.1:
+		var target := atan2(direction.x, direction.z)
+		_char.global_rotation.y = lerp_angle(_char.global_rotation.y, target, clampf(delta * 12.0, 0.0, 1.0))
 
 
 # ------------------------------------------------------------------------------
