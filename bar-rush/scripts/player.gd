@@ -72,16 +72,32 @@ const GRADE_QUALITY := [0.5, 0.8, 1.0]  # POOR/GOOD/PERFECT -> quality for prici
 
 const GLASS_H := 0.34
 const GLASS_BOTTOM := -0.17
-# Beer mug glass model (imported from Beer_Mug_Glass.usdz -> OBJ). MUG_MODEL_H is its
-# natural height in model units (base at y=0); GLASS_INNER_R is the beer/foam column
-# radius that sits just inside the mug's wall once it's scaled down to GLASS_H.
+# The TRAY glasses still use the little mug model (handled). MUG_MODEL_H is its natural
+# height in model units (base at y=0).
 const MUG_MESH := preload("res://assets/beer_mug/beer_mug.obj")
 const MUG_MODEL_H := 15.7113
-const GLASS_INNER_R := 0.075
+# The ACTIVE pour glass is the tall pint ("bierglas", decimated to ~8k tris). The glb
+# comes in upright (height on +Y, base at y=0), ~GLASS_MODEL_H units tall; GLASS_INNER_R
+# is the beer/foam column radius that sits just inside its wall once scaled to GLASS_H.
+const GLASS_SCENE := preload("res://assets/beer_glass/beer_glass.glb")
+const GLASS_MODEL_H := 10.9157
+const GLASS_INNER_R := 0.042
 # While pouring, the active glass sits on the counter UNDER the tap (so you watch it
 # fill where you're looking), then goes to the hand-tray once stocked. The counter top
 # is at world y=1.1, so the glass root sits at 1.1 - GLASS_BOTTOM.
 const GLASS_SIT_Y := 1.27
+
+# --- First-person "pour view" ------------------------------------------------
+# When you're standing at a tap (able to pour), the camera automatically drops into a
+# close first-person shot of the glass under the spout (Brewpub-style). Walk away and it
+# returns to third person. Movement stays on, so pushing BACK walks you out of the view.
+@export var pour_cam_up := 0.16          # camera height above the glass centre
+@export var pour_cam_back := 0.46        # camera distance toward the player side (-Z) -- close
+@export var pour_cam_look_up := 0.12     # look a touch above centre (stream entering the glass)
+@export var pour_cam_fov := 54.0
+var _pour_cam: Camera3D
+var _in_pour_view := false               # currently framed on the glass
+var _pour_anim_t := 0.0                  # time accumulator for the pour stream/splash wobble
 
 # The bartender character (Mixamo-rigged FBX). It's shown only in third person as the
 # player's body. Mesh names survived, so the face gets its real texture; the body uses a
@@ -138,6 +154,8 @@ var _active_liquid_mat: StandardMaterial3D
 var _active_foam: MeshInstance3D
 var _pour_stream: MeshInstance3D            # beer falling into the glass while pouring
 var _pour_stream_mat: StandardMaterial3D
+var _splash: MeshInstance3D                 # foam splash where the stream hits the surface
+var _splash_mat: StandardMaterial3D
 var _pouring_now := false                   # are we actively pouring THIS frame?
 var _active_tap_world := Vector3(0, 1.95, 4.7)  # world pos of the tap we're pouring from
 var _hold_base_y := 0.0                     # resting height of the Hold point (for bob)
@@ -167,6 +185,13 @@ func _ready() -> void:
 	_pitch = -0.42                  # start angled down for a 3rd-person view
 	_head.rotation.x = _pitch
 	_set_view(true)
+
+	# A separate camera for the first-person pour view. We drive its world transform
+	# directly, and hand "current" back and forth with the main spring-arm camera.
+	_pour_cam = Camera3D.new()
+	_pour_cam.fov = pour_cam_fov
+	_pour_cam.current = false
+	add_child(_pour_cam)
 	if DisplayServer.is_touchscreen_available():
 		_hint_act = "POUR"
 		_hint_dump = "DUMP"
@@ -385,6 +410,45 @@ func _handle_camera(delta: float) -> void:
 		_head.rotation.x = _pitch
 
 
+# The world transform for the first-person pour shot: a camera up-and-back from the glass
+# that sits under the active tap, looking slightly down at it with the spout in frame.
+func _pour_target_xform() -> Transform3D:
+	var g := Vector3(_active_tap_world.x, GLASS_SIT_Y, _active_tap_world.z)
+	var cam_pos := g + Vector3(0.0, pour_cam_up, -pour_cam_back)   # player side is -Z
+	var look_at := g + Vector3(0.0, pour_cam_look_up, 0.0)
+	return Transform3D(Basis.IDENTITY, cam_pos).looking_at(look_at, Vector3.UP)
+
+
+# Blend the pour camera in when `want` (at a tap, able to pour) and back out when not.
+# We seed it from the main camera on entry so the switch is a smooth move, hide the
+# bartender while we're looking first-person, and hand "current" back once we're home.
+func _update_pour_camera(delta: float, want: bool) -> void:
+	if want and not _in_pour_view:
+		_pour_cam.global_transform = _camera.global_transform
+		_pour_cam.fov = _camera.fov
+		_pour_cam.current = true
+		_in_pour_view = true
+		if _char != null:
+			_char.visible = false
+	elif not want and _in_pour_view:
+		_in_pour_view = false
+
+	if _in_pour_view:
+		var k := clampf(delta * 6.0, 0.0, 1.0)
+		_pour_cam.global_transform = _pour_cam.global_transform.interpolate_with(_pour_target_xform(), k)
+		_pour_cam.fov = lerpf(_pour_cam.fov, pour_cam_fov, k)
+	elif _pour_cam.current:
+		# Returning to third person: glide back onto the main camera, then hand off.
+		var k := clampf(delta * 8.0, 0.0, 1.0)
+		_pour_cam.global_transform = _pour_cam.global_transform.interpolate_with(_camera.global_transform, k)
+		_pour_cam.fov = lerpf(_pour_cam.fov, _camera.fov, k)
+		if _pour_cam.global_transform.origin.distance_to(_camera.global_transform.origin) < 0.06:
+			_camera.current = true
+			_pour_cam.current = false
+			if _char != null:
+				_char.visible = true
+
+
 func _process(delta: float) -> void:
 	var counter := get_tree().get_first_node_in_group("counter")
 	var tap := {}
@@ -406,6 +470,7 @@ func _process(delta: float) -> void:
 	# Space is the single action key. Priority: ring up at the register > serve a
 	# nearby customer > pour at a tap.
 	var pouring := false
+	var serveable := false
 	if at_register:
 		_handle_register(gm, delta)
 	else:
@@ -413,6 +478,7 @@ func _process(delta: float) -> void:
 			gm.register_end()                    # we walked away from the register
 		var customer := _nearest_waiting_customer()
 		var can_serve := customer != null and _find_tray_glass(customer.get_order()) != -1
+		serveable = can_serve
 		if can_serve:
 			if Input.is_action_just_pressed("pour"):
 				_serve_to(customer)
@@ -434,6 +500,10 @@ func _process(delta: float) -> void:
 	_pouring_now = pouring
 	if not tap.is_empty():
 		_active_tap_world = tap["position"]   # remember which faucet to pour under
+	_pour_anim_t += delta
+	# Automatically frame the glass in first person whenever we're at a tap and able to
+	# pour (not at the register, no customer to serve). Walking away returns to 3rd person.
+	_update_pour_camera(delta, near_tap and not at_register and not serveable)
 	_update_character_anim()
 	_update_char_fade()
 	_update_active_visual()
@@ -791,28 +861,30 @@ func _build_carry_visuals() -> void:
 		_tray_materials.append(mat)
 
 	# The active glass we're pouring. It's top_level so we can park it in WORLD space
-	# under the tap you're pouring from (you watch it fill where you're looking),
-	# rather than down at your hip.
+	# under the tap you're pouring from (you watch it fill where you're looking), rather
+	# than down at your hip. Parent it to the PLAYER (not $Hold) -- $Hold gets hidden while
+	# pouring (no tray), and a hidden parent would hide the glass too (top_level only frees
+	# the transform, not visibility).
 	_active_root = Node3D.new()
 	_active_root.top_level = true
-	$Hold.add_child(_active_root)
+	add_child(_active_root)
 
-	# The mug is the imported glass model (Beer_Mug_Glass.usdz -> OBJ), shown as clear
-	# glass. Its model is MUG_MODEL_H tall with its base at y=0, so we scale it to
+	# The active glass is the tall pint model (beer_glass.glb), shown as clear glass. It
+	# imports upright (height on +Y, base at y=0, GLASS_MODEL_H tall), so we scale it to
 	# GLASS_H and sit its base at GLASS_BOTTOM; the liquid/foam cylinders below fill it.
-	var mug := MeshInstance3D.new()
-	mug.mesh = MUG_MESH
-	var s := GLASS_H / MUG_MODEL_H
-	mug.scale = Vector3(s, s, s)
-	mug.position = Vector3(0, GLASS_BOTTOM, 0)
-	mug.rotation_degrees = Vector3(0, 150, 0)      # turn the handle to a natural angle
-	var mug_mat := _solid(Color(0.82, 0.88, 0.95, 0.16))
-	mug_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	mug_mat.roughness = 0.05
-	mug_mat.metallic = 0.0
-	mug_mat.cull_mode = BaseMaterial3D.CULL_DISABLED   # thin glass: show both faces
-	mug.material_override = mug_mat
-	_active_root.add_child(mug)
+	var glass := MeshInstance3D.new()
+	glass.mesh = _glass_mesh()
+	var s := GLASS_H / GLASS_MODEL_H
+	glass.scale = Vector3(s, s, s)
+	glass.position = Vector3(0, GLASS_BOTTOM, 0)
+	var glass_mat := _solid(Color(0.85, 0.90, 0.96, 0.28))
+	glass_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	glass_mat.roughness = 0.04
+	glass_mat.metallic = 0.0
+	glass_mat.specular = 0.8                            # catch highlights so the walls read
+	glass_mat.cull_mode = BaseMaterial3D.CULL_DISABLED   # thin glass: show both faces
+	glass.material_override = glass_mat
+	_active_root.add_child(glass)
 
 	# Beer + foam sit INSIDE the glass (radius kept just under the mug's inner wall).
 	_active_liquid = MeshInstance3D.new()
@@ -826,15 +898,31 @@ func _build_carry_visuals() -> void:
 	_active_foam.material_override = _solid(Globals.FOAM_COLOR)
 	_active_root.add_child(_active_foam)
 
-	# A thin "stream" of beer that appears above the glass while actively pouring,
-	# reaching down from the rim to the current beer surface. Sells the pour.
+	# A "stream" of beer that appears above the glass while actively pouring, reaching down
+	# from the spout to the current beer surface. Tapered (wider at the spout, thinner as it
+	# speeds up) and emissive so it reads as flowing beer.
 	_pour_stream = MeshInstance3D.new()
-	_pour_stream.mesh = _unit_cylinder(0.008)
+	var stream_mesh := CylinderMesh.new()
+	stream_mesh.top_radius = 0.008
+	stream_mesh.bottom_radius = 0.005
+	stream_mesh.height = 1.0
+	_pour_stream.mesh = stream_mesh
 	_pour_stream_mat = _solid(Color.WHITE)
 	_pour_stream_mat.emission_enabled = true
 	_pour_stream.material_override = _pour_stream_mat
 	_pour_stream.visible = false
 	_active_root.add_child(_pour_stream)
+
+	# A little foam splash where the stream lands, pulsing while pouring.
+	_splash = MeshInstance3D.new()
+	var splash_mesh := SphereMesh.new()
+	splash_mesh.radius = GLASS_INNER_R * 0.9
+	splash_mesh.height = GLASS_INNER_R * 0.9
+	_splash.mesh = splash_mesh
+	_splash_mat = _solid(Globals.FOAM_COLOR)
+	_splash.material_override = _splash_mat
+	_splash.visible = false
+	_active_root.add_child(_splash)
 
 	_hold_base_y = $Hold.position.y
 
@@ -848,12 +936,23 @@ func _update_active_visual() -> void:
 		else:
 			_tray_glasses[i].visible = false
 
-	# Active glass fills up as we pour -- parked on the counter under the tap.
-	_active_root.visible = _beer_type != -1
-	if _beer_type == -1:
+	# The active glass is parked on the counter under the tap. Show the EMPTY glass as soon
+	# as we're framed on the tap (ready to pour), and keep it while a beer is in it.
+	var show_glass := _in_pour_view or _beer_type != -1
+	_active_root.visible = show_glass
+	if not show_glass:
 		return
 	_active_root.global_position = Vector3(_active_tap_world.x, GLASS_SIT_Y, _active_tap_world.z)
 	_active_root.global_rotation = Vector3.ZERO
+
+	# Framed on the tap but nothing poured yet: just the empty glass.
+	if _beer_type == -1:
+		_active_liquid.visible = false
+		_active_foam.visible = false
+		_pour_stream.visible = false
+		_splash.visible = false
+		return
+
 	var liquid_h := GLASS_H * _liquid
 	var foam_h := GLASS_H * _foam
 	_active_liquid.visible = liquid_h > 0.001
@@ -864,17 +963,28 @@ func _update_active_visual() -> void:
 	_active_foam.scale.y = maxf(foam_h, 0.001)
 	_active_foam.position.y = GLASS_BOTTOM + liquid_h + foam_h / 2.0
 
-	# Pour stream: a thin beer column from the FAUCET spout down to the beer surface,
-	# visible only while actively holding the pour.
+	# Pour stream: a short beer column falling INTO the glass -- from a little above the rim
+	# down to the current beer surface (we don't run it all the way up to the far tap, which
+	# would be a long thin pole in this close shot). A small wobble sells the "flow".
 	var surface := GLASS_BOTTOM + liquid_h + foam_h
-	var spout_local := (_active_tap_world.y - GLASS_SIT_Y) - 0.05   # faucet tip in root space
-	var stream_h := maxf(spout_local - surface, 0.001)
-	_pour_stream.visible = _pouring_now and not _ruined
+	var rim := GLASS_BOTTOM + GLASS_H
+	var stream_top := minf(rim + 0.12, (_active_tap_world.y - GLASS_SIT_Y) - 0.05)
+	var stream_h := maxf(stream_top - surface, 0.001)
+	var flowing := _pouring_now and not _ruined
+	_pour_stream.visible = flowing
 	_pour_stream.scale.y = stream_h
-	_pour_stream.position.y = surface + stream_h / 2.0
+	var wobble := sin(_pour_anim_t * 26.0) * 0.004
+	_pour_stream.position = Vector3(wobble, surface + stream_h / 2.0, 0.0)
 	_pour_stream_mat.albedo_color = Globals.color_for(_beer_type)
 	_pour_stream_mat.emission = Globals.color_for(_beer_type)
 	_pour_stream_mat.emission_energy_multiplier = 0.4
+
+	# Foam splash where the stream lands on the surface, pulsing while pouring.
+	_splash.visible = flowing and liquid_h > 0.002
+	if _splash.visible:
+		var pulse := 0.8 + 0.3 * sin(_pour_anim_t * 18.0)
+		_splash.scale = Vector3(pulse, 0.4, pulse)
+		_splash.position.y = surface
 
 
 # A gentle idle bob on the carried tray/glass so it reads as "held", with a little
@@ -898,6 +1008,18 @@ func _unit_cylinder(radius: float) -> CylinderMesh:
 	cyl.bottom_radius = radius
 	cyl.height = 1.0
 	return cyl
+
+
+# Pull the single Mesh out of the imported glass glb (we build our own MeshInstance so we
+# can apply a clear-glass material_override, same as the old mug path).
+func _glass_mesh() -> Mesh:
+	var inst := GLASS_SCENE.instantiate()
+	var m: Mesh = null
+	for mi in _collect_meshes(inst):
+		m = mi.mesh
+		break
+	inst.free()
+	return m
 
 
 # ------------------------------------------------------------------------------

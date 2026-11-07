@@ -43,8 +43,8 @@ var _pour_root: Control
 var _pour_liquid: ColorRect
 var _pour_foam: ColorRect
 var _pour_label: Label
-const METER_W := 120.0
-const METER_H := 330.0
+const METER_W := 42.0
+const METER_H := 300.0
 const GREEN_FROM := 0.74   # perfect-pour liquid window (bottom)
 const GREEN_TO := 0.95     # perfect-pour liquid window (top)
 
@@ -268,18 +268,19 @@ func _capacity() -> int:
 # Pour meter
 # ------------------------------------------------------------------------------
 func _build_pour_meter() -> void:
-	# Bottom-centre so it's clearly visible while pouring and clear of the joystick
-	# (bottom-left) and POUR/DUMP buttons (bottom-right) on phones.
+	# A slim gauge pinned to the RIGHT edge, vertically centred -- it sits beside the
+	# big first-person glass in the pour view (the glass itself is the main read),
+	# clear of the joystick (bottom-left) and POUR/DUMP buttons (bottom-right).
 	_pour_root = Control.new()
-	_pour_root.anchor_left = 0.5
-	_pour_root.anchor_right = 0.5
-	_pour_root.anchor_top = 1.0
-	_pour_root.anchor_bottom = 1.0
-	_pour_root.offset_left = -METER_W / 2.0
-	_pour_root.offset_right = METER_W / 2.0
-	_pour_root.offset_top = -(METER_H + 70.0)
-	_pour_root.offset_bottom = -70.0
-	_pour_root.clip_contents = true
+	_pour_root.anchor_left = 1.0
+	_pour_root.anchor_right = 1.0
+	_pour_root.anchor_top = 0.5
+	_pour_root.anchor_bottom = 0.5
+	_pour_root.offset_left = -(METER_W + 30.0)
+	_pour_root.offset_right = -30.0
+	_pour_root.offset_top = -METER_H / 2.0
+	_pour_root.offset_bottom = METER_H / 2.0
+	_pour_root.clip_contents = false
 	_pour_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_pour_root.visible = false
 	add_child(_pour_root)
@@ -308,10 +309,11 @@ func _build_pour_meter() -> void:
 	green.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_pour_root.add_child(green)
 
+	# Label centred over the slim gauge (wider than the gauge so "PERFECT!" fits).
 	_pour_label = Label.new()
 	_pour_label.text = "POUR"
-	_pour_label.position = Vector2(0, -40)
-	_pour_label.size.x = METER_W
+	_pour_label.position = Vector2(METER_W / 2.0 - 75.0, -44)
+	_pour_label.size.x = 150.0
 	_pour_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_pour_label.add_theme_font_size_override("font_size", 24)
 	_pour_label.add_theme_color_override("font_outline_color", Color.BLACK)
