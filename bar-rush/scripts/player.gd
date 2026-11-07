@@ -413,16 +413,16 @@ func _handle_camera(delta: float) -> void:
 
 
 # Where the active glass sits in the world: under the tap, but pulled toward the bartender
-# so the tower's end pipes stay behind it.
+# (behind the bar, +Z) so the tower's end pipes stay behind it.
 func _glass_world_pos() -> Vector3:
-	return Vector3(_active_tap_world.x, GLASS_SIT_Y, _active_tap_world.z - pour_glass_forward)
+	return Vector3(_active_tap_world.x, GLASS_SIT_Y, _active_tap_world.z + pour_glass_forward)
 
 
-# The world transform for the first-person pour shot: a camera up-and-back from the glass,
-# looking slightly down at it.
+# The world transform for the first-person pour shot: a camera up-and-behind the glass (the
+# bartender stands behind the bar at +Z), looking out over it toward the room.
 func _pour_target_xform() -> Transform3D:
 	var g := _glass_world_pos()
-	var cam_pos := g + Vector3(0.0, pour_cam_up, -pour_cam_back)   # player side is -Z
+	var cam_pos := g + Vector3(0.0, pour_cam_up, pour_cam_back)   # bartender side is +Z
 	var look_at := g + Vector3(0.0, pour_cam_look_up, 0.0)
 	return Transform3D(Basis.IDENTITY, cam_pos).looking_at(look_at, Vector3.UP)
 
@@ -511,9 +511,10 @@ func _process(delta: float) -> void:
 	_pour_anim_t += delta
 	# Drop into the first-person pour view only when you actually START pouring (hold POUR)
 	# and keep it until the glass is finished -- not just by standing near the tap. Only from
-	# the bartender's side of the bar (nearer the room than the tap), so the camera never ends
-	# up out past the counter looking back through the beer tower.
-	var inside_bar := global_position.z < _active_tap_world.z
+	# BEHIND the bar (the bartender's side, z greater than the tap; the stools/tables/customers
+	# are out front at z<5), so the camera sits behind the glass looking out, never through the
+	# tower from the customer side.
+	var inside_bar := global_position.z > _active_tap_world.z
 	var want_pour_view := near_tap and inside_bar and not at_register and not serveable \
 		and (Input.is_action_pressed("pour") or _beer_type != -1)
 	_update_pour_camera(delta, want_pour_view)
