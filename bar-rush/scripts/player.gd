@@ -94,7 +94,9 @@ const GLASS_SIT_Y := 1.27
 @export var pour_cam_up := 0.16          # camera height above the glass centre
 @export var pour_cam_back := 0.46        # camera distance toward the player side (-Z) -- close
 @export var pour_cam_look_up := 0.12     # look a touch above centre (stream entering the glass)
-@export var pour_cam_fov := 54.0
+@export var pour_cam_fov := 50.0
+@export var pour_glass_forward := 0.40   # pull the glass toward the bartender so the tower's
+                                         # end pipes sit well behind it, not across the view
 var _pour_cam: Camera3D
 var _in_pour_view := false               # currently framed on the glass
 var _pour_anim_t := 0.0                  # time accumulator for the pour stream/splash wobble
@@ -410,10 +412,16 @@ func _handle_camera(delta: float) -> void:
 		_head.rotation.x = _pitch
 
 
-# The world transform for the first-person pour shot: a camera up-and-back from the glass
-# that sits under the active tap, looking slightly down at it with the spout in frame.
+# Where the active glass sits in the world: under the tap, but pulled toward the bartender
+# so the tower's end pipes stay behind it.
+func _glass_world_pos() -> Vector3:
+	return Vector3(_active_tap_world.x, GLASS_SIT_Y, _active_tap_world.z - pour_glass_forward)
+
+
+# The world transform for the first-person pour shot: a camera up-and-back from the glass,
+# looking slightly down at it.
 func _pour_target_xform() -> Transform3D:
-	var g := Vector3(_active_tap_world.x, GLASS_SIT_Y, _active_tap_world.z)
+	var g := _glass_world_pos()
 	var cam_pos := g + Vector3(0.0, pour_cam_up, -pour_cam_back)   # player side is -Z
 	var look_at := g + Vector3(0.0, pour_cam_look_up, 0.0)
 	return Transform3D(Basis.IDENTITY, cam_pos).looking_at(look_at, Vector3.UP)
@@ -501,9 +509,14 @@ func _process(delta: float) -> void:
 	if not tap.is_empty():
 		_active_tap_world = tap["position"]   # remember which faucet to pour under
 	_pour_anim_t += delta
-	# Automatically frame the glass in first person whenever we're at a tap and able to
-	# pour (not at the register, no customer to serve). Walking away returns to 3rd person.
-	_update_pour_camera(delta, near_tap and not at_register and not serveable)
+	# Drop into the first-person pour view only when you actually START pouring (hold POUR)
+	# and keep it until the glass is finished -- not just by standing near the tap. Only from
+	# the bartender's side of the bar (nearer the room than the tap), so the camera never ends
+	# up out past the counter looking back through the beer tower.
+	var inside_bar := global_position.z < _active_tap_world.z
+	var want_pour_view := near_tap and inside_bar and not at_register and not serveable \
+		and (Input.is_action_pressed("pour") or _beer_type != -1)
+	_update_pour_camera(delta, want_pour_view)
 	_update_character_anim()
 	_update_char_fade()
 	_update_active_visual()
@@ -942,7 +955,7 @@ func _update_active_visual() -> void:
 	_active_root.visible = show_glass
 	if not show_glass:
 		return
-	_active_root.global_position = Vector3(_active_tap_world.x, GLASS_SIT_Y, _active_tap_world.z)
+	_active_root.global_position = _glass_world_pos()
 	_active_root.global_rotation = Vector3.ZERO
 
 	# Framed on the tap but nothing poured yet: just the empty glass.
