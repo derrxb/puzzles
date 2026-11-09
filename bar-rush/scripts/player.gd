@@ -207,14 +207,14 @@ func _unhandled_input(event: InputEvent) -> void:
 		if event.button_index == MOUSE_BUTTON_RIGHT:
 			Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED if event.pressed else Input.MOUSE_MODE_VISIBLE)
 		elif event.button_index == MOUSE_BUTTON_WHEEL_UP:
-			third_person_distance = clampf(third_person_distance - 0.4, 1.2, 6.0)
+			third_person_distance = clampf(third_person_distance - 0.4, 1.2, 4.0)
 			_spring.spring_length = third_person_distance
 		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
-			third_person_distance = clampf(third_person_distance + 0.4, 1.2, 6.0)
+			third_person_distance = clampf(third_person_distance + 0.4, 1.2, 4.0)
 			_spring.spring_length = third_person_distance
 	elif event is InputEventMouseMotion and Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED:
 		rotate_y(-event.relative.x * mouse_sensitivity)
-		_pitch = clampf(_pitch - event.relative.y * mouse_sensitivity, -1.3, 0.4)
+		_pitch = clampf(_pitch - event.relative.y * mouse_sensitivity, -1.3, 0.05)
 		_head.rotation.x = _pitch
 	# --- TOUCH (phone): one-finger drag orbits, two-finger pinch zooms. Only touches on
 	# empty background reach here -- the joystick/buttons/seat Controls consume theirs. ---
@@ -234,13 +234,13 @@ func _unhandled_input(event: InputEvent) -> void:
 			var dx := clampf(-sd.relative.x * touch_look_sensitivity, -0.09, 0.09)
 			var dy := clampf(-sd.relative.y * touch_look_sensitivity, -0.09, 0.09)
 			rotate_y(dx)
-			_pitch = clampf(_pitch + dy, -1.3, 0.4)
+			_pitch = clampf(_pitch + dy, -1.3, 0.05)
 			_head.rotation.x = _pitch
 		elif _cam_touches.size() == 2:
 			var ks := _cam_touches.keys()
 			var cur: float = _cam_touches[ks[0]].distance_to(_cam_touches[ks[1]])
 			if _prev_pinch > 0.0:
-				third_person_distance = clampf(third_person_distance - (cur - _prev_pinch) * 0.012, 1.2, 6.0)
+				third_person_distance = clampf(third_person_distance - (cur - _prev_pinch) * 0.012, 1.2, 4.0)
 				_spring.spring_length = third_person_distance
 			_prev_pinch = cur
 
@@ -408,7 +408,7 @@ func _handle_camera(delta: float) -> void:
 	if yaw_in != 0.0:
 		rotate_y(-yaw_in * camera_turn_speed * delta)
 	if pitch_in != 0.0:
-		_pitch = clampf(_pitch + pitch_in * camera_turn_speed * delta, -1.3, 0.4)
+		_pitch = clampf(_pitch + pitch_in * camera_turn_speed * delta, -1.3, 0.05)
 		_head.rotation.x = _pitch
 
 

@@ -1,6 +1,6 @@
 # Credits — 3D assets
 
-Third-party 3D models used in Bar Rush and their attribution.
+Third-party 3D models used in Puzzles and their attribution.
 
 ## Old bar (environment)
 - **Title:** Old bar

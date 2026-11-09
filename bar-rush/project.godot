@@ -10,7 +10,7 @@ config_version=5
 
 [application]
 
-config/name="Bar Rush"
+config/name="Puzzles"
 run/main_scene="res://scenes/Main.tscn"
 config/features=PackedStringArray("4.7", "GL Compatibility")
 config/icon="res://icon.svg"

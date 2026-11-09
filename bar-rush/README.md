@@ -1,4 +1,4 @@
-# Bar Rush 🍺
+# Puzzles 🍺
 
 A tiny, Overcooked-style **co-op bar management** game built in **Godot 4.7**
 (GDScript only, Compatibility renderer so it can run in a web browser).
