@@ -24,23 +24,39 @@
 #    collider that matches the model's actual geometry: for every visible mesh we
 #    call create_trimesh_collision(), which adds a StaticBody3D whose shape is the
 #    mesh's own triangles. Now "solid to the eye" == "solid to the body and the
-#    camera". We only do this for the big WALL-shaped meshes, though: a first pass
-#    that collided every mesh turned every free-standing prop (arcade machine,
-#    jukebox, vending machine, potted plants) into a solid obstacle, and the player
-#    kept getting wedged in the pockets between them. So _looks_like_wall() keeps
-#    just the room shell + back walls (tall, long, thin), which is what the camera
-#    and "don't leave the room" actually need. Props stay walk-through (you can
-#    brush past them, which is far better than getting stuck), and the counter,
-#    tables and register keep their own hand-placed colliders from before.
+#    camera".
+#
+#    But "solid to the body" and "solid to the camera" are two different needs, and
+#    lumping them together caused trouble both ways: collide NOTHING and the camera
+#    slides through the walls and shows the void behind them; collide EVERYTHING and
+#    every free-standing prop (arcade cabinet, jukebox, vending machine, plants)
+#    becomes a solid obstacle the player wedges between. So we split them across two
+#    collision layers:
+#      - WALL-shaped meshes (tall, long, thin slabs -- the room shell + back walls)
+#        go on layer 1, which BOTH the player body and the camera collide with. You
+#        can't walk through a wall, and the camera stops at it.
+#      - every other mesh (the props) goes on layer 4, a "camera-only" layer: the
+#        follow-camera's spring arm retracts off it (so it never reveals the void),
+#        but the player body -- which only collides with layer 1 -- walks right
+#        through, so no more getting stuck on the furniture.
+#    The counter, tables and register keep their own hand-placed layer-1 colliders,
+#    and the invisible perimeter walls from main.gd still fence the room.
 extends Node3D
 
-# A mesh counts as a wall (gets a collider) when it is tall, long, and thin in one
+# A mesh counts as a wall (solid to the body) when it is tall, long, and thin in one
 # horizontal direction -- i.e. a slab standing on the floor. Sizes are in world
 # (game) units, so this is robust to the model's odd internal scale. Props like the
-# arcade cabinet are too short/stubby to match and are left pass-through.
+# arcade cabinet are too short/stubby to match, so they land on the camera-only
+# layer instead.
 const WALL_MIN_HEIGHT := 1.5   # at least waist-to-head tall
 const WALL_MIN_LENGTH := 2.0   # runs for a couple of metres
 const WALL_MAX_THICK := 0.9    # thin in its other horizontal axis
+
+# Bit 3 (value 8) == "layer 4" in the editor. The bar model's props sit here so the
+# camera (whose spring arm masks layers 1 and 4) retracts off them while the player
+# body (which masks only layer 1) passes through. Keep this in sync with the spring
+# arm's collision_mask in player.gd.
+const CAMERA_ONLY_LAYER := 1 << 3
 
 const HIDDEN_MESHES: Array[String] = [
 	"FrontSide_4", "FrontSide_10", "FrontSide_16", "FrontSide_28",
@@ -60,19 +76,31 @@ func _ready() -> void:
 	_add_collision(self, hidden)
 
 
-# Walk the model tree and give every VISIBLE, WALL-shaped mesh a trimesh collider
-# that matches its triangles exactly. Skipping the hidden overhead meshes and the
-# free-standing props keeps the player from being blocked by things they either
-# can't see or should be able to brush past.
+# Walk the model tree and give every VISIBLE mesh a trimesh collider matching its
+# triangles. Walls go on layer 1 (solid to body + camera); everything else goes on
+# the camera-only layer. Hidden overhead meshes are skipped -- you can't see them,
+# so neither the body nor the camera should catch on them.
 func _add_collision(node: Node, hidden: Dictionary) -> void:
 	for child in node.get_children():
 		if child is MeshInstance3D and child.mesh != null and not hidden.has(child.name):
-			if _looks_like_wall(child):
-				# create_trimesh_collision() adds a StaticBody3D child using the
-				# mesh's own faces, on collision layer 1 -- the layer the player
-				# body collides with and the spring-arm camera retracts from.
-				child.create_trimesh_collision()
+			var body := _make_collider(child)
+			if body != null and not _looks_like_wall(child):
+				# A prop: camera retracts off it, but the body passes through.
+				body.collision_layer = CAMERA_ONLY_LAYER
+				body.collision_mask = 0
 		_add_collision(child, hidden)
+
+
+# create_trimesh_collision() builds a StaticBody3D child (layer 1 by default) from
+# the mesh's faces; return it so the caller can move props to the camera-only layer.
+func _make_collider(mi: MeshInstance3D) -> StaticBody3D:
+	var before := mi.get_child_count()
+	mi.create_trimesh_collision()
+	for i in range(before, mi.get_child_count()):
+		var c := mi.get_child(i)
+		if c is StaticBody3D:
+			return c
+	return null
 
 
 # True when the mesh's world-space bounding box is a tall, long, thin slab -- a

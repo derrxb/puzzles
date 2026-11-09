@@ -181,6 +181,12 @@ func _ready() -> void:
 	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 	_raycast.add_exception(self)
 	_spring.add_excluded_object(self.get_rid())
+	# The follow-camera retracts off BOTH the solid walls/counter (layer 1) AND the
+	# "camera-only" decor layer 4 that the bar model's props sit on (arcade, jukebox,
+	# shelves...). That way the camera never slides through a visible surface and
+	# shows the void behind it, even though the player body (which only collides with
+	# layer 1) can still walk freely past those props. See bar_environment.gd.
+	_spring.collision_mask = 0b1001  # layers 1 + 4
 	# The body doesn't rotate (no mouse-look); it faces the bar so the follow-cam sits
 	# on the room side looking at the counter. The bartender turns to face his movement.
 	rotation.y = PI
